@@ -12,8 +12,9 @@ services:
       timeout: 10s
       retries: 3
     volumes:
-      - ./app.py:/app/app.py
-      - ./file_cleanup.py:/app/file_cleanup.py
+      # Using a named volume for application code instead of bind mounts
+      # This is more compatible with Portainer deployments
+      - app_code:/app
       - temp_files:/tmp
     environment:
       - PORT=${PORT:-5000}
@@ -33,8 +34,9 @@ services:
     build: .
     command: celery -A app.celery worker --loglevel=info
     volumes:
-      - ./app.py:/app/app.py
-      - ./file_cleanup.py:/app/file_cleanup.py
+      # Using a named volume for application code instead of bind mounts
+      # This is more compatible with Portainer deployments
+      - app_code:/app
       - temp_files:/tmp
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
@@ -47,8 +49,9 @@ services:
     build: .
     command: celery -A app.celery beat --loglevel=info
     volumes:
-      - ./app.py:/app/app.py
-      - ./file_cleanup.py:/app/file_cleanup.py
+      # Using a named volume for application code instead of bind mounts
+      # This is more compatible with Portainer deployments
+      - app_code:/app
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -58,4 +61,6 @@ services:
       - celery-worker
 
 volumes:
+  app_code:
+    # This volume will contain your application code
   temp_files:
