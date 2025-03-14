@@ -1,0 +1,7 @@
+flask==2.0.1
+textract==1.6.5
+gunicorn==20.1.0
+werkzeug==2.0.1
+celery==5.2.3
+redis==4.3.4
+flask-cors==3.0.10

@@ -1,0 +1,61 @@
+version: '3'
+
+services:
+  doc-converter:
+    build: .
+    ports:
+      - "5001:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./app.py:/app/app.py
+      - ./file_cleanup.py:/app/file_cleanup.py
+      - temp_files:/tmp
+    environment:
+      - PORT=${PORT:-5000}
+      - MAX_CONTENT_LENGTH=${MAX_CONTENT_LENGTH:-16777216}  # 16MB in bytes
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - API_KEY=${API_KEY:-default_dev_key}
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+  celery-worker:
+    build: .
+    command: celery -A app.celery worker --loglevel=info
+    volumes:
+      - ./app.py:/app/app.py
+      - ./file_cleanup.py:/app/file_cleanup.py
+      - temp_files:/tmp
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - API_KEY=${API_KEY:-default_dev_key}
+    depends_on:
+      - redis
+      
+  celery-beat:
+    build: .
+    command: celery -A app.celery beat --loglevel=info
+    volumes:
+      - ./app.py:/app/app.py
+      - ./file_cleanup.py:/app/file_cleanup.py
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - API_KEY=${API_KEY:-default_dev_key}
+    depends_on:
+      - redis
+      - celery-worker
+
+volumes:
+  temp_files:
