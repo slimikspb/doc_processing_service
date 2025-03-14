@@ -26,8 +26,8 @@ services:
 
   redis:
     image: redis:alpine
-    ports:
-      - "6381:6379"
+    # Not exposing Redis externally for better security
+    # Redis is only accessible from within the Docker network
 
   celery-worker:
     build: .
