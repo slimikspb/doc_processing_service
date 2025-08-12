@@ -57,3 +57,18 @@ Thumbs.db
 
 # Redis dump file
 dump.rdb
+
+# Test files and directories
+test_files/
+*.test.*
+create_test_files.py
+test_multiple_formats.py
+
+# Health monitoring
+healthcheck.py
+
+# Process management (optional deployment config)
+supervisord.conf
+
+# Project documentation (user-specific)
+CLAUDE.md

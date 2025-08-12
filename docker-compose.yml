@@ -6,14 +6,12 @@ services:
     ports:
       - "5001:5000"
     restart: unless-stopped
-    # Disable healthcheck for now since the service is working correctly
-    # We can re-enable it later with proper configuration
-    # healthcheck:
-    #   test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 20s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     volumes:
       # Using a named volume for application code instead of bind mounts
       # This is more compatible with Portainer deployments
@@ -30,12 +28,15 @@ services:
 
   redis:
     image: redis:alpine
+    restart: unless-stopped
     # Not exposing Redis externally for better security
     # Redis is only accessible from within the Docker network
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
 
   celery-worker:
     build: .
-    command: celery -A app.celery worker --loglevel=info
+    command: celery -A app.celery worker --loglevel=info --max-tasks-per-child=10 --pool=prefork
+    restart: unless-stopped
     volumes:
       # Using a named volume for application code instead of bind mounts
       # This is more compatible with Portainer deployments
@@ -51,6 +52,7 @@ services:
   celery-beat:
     build: .
     command: celery -A app.celery beat --loglevel=info
+    restart: unless-stopped
     volumes:
       # Using a named volume for application code instead of bind mounts
       # This is more compatible with Portainer deployments

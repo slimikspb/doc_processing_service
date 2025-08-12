@@ -3,6 +3,8 @@ import logging
 import uuid
 import time
 import glob
+import signal
+import subprocess
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify, url_for, abort
@@ -11,6 +13,8 @@ import textract
 from celery import Celery
 from celery.result import AsyncResult
 from celery.schedules import crontab
+from celery.exceptions import SoftTimeLimitExceeded
+from werkzeug.exceptions import RequestEntityTooLarge
 
 # Configure logging
 logging.basicConfig(
@@ -79,28 +83,46 @@ def trigger_cleanup():
         'message': 'Cleanup task started'
     })
 
-@celery.task(name='app.cleanup_temp_files')
+@celery.task(name='app.cleanup_temp_files', soft_time_limit=60, time_limit=90)
 def cleanup_task():
-    """Celery task wrapper for cleanup_temp_files function"""
-    return cleanup_temp_files()
+    """Celery task wrapper for cleanup_temp_files function with timeout"""
+    try:
+        return cleanup_temp_files()
+    except SoftTimeLimitExceeded:
+        logger.error('Cleanup task timed out')
+        return {'error': 'Cleanup timed out', 'status': 'failed'}
 
-# Celery task for document processing
-@celery.task(name='app.process_document')
+# Celery task for document processing with timeout
+@celery.task(name='app.process_document', soft_time_limit=120, time_limit=180)
 def process_document(temp_path, original_filename):
     logger.info(f'Processing document: {original_filename}')
     
     try:
-        # Extract text from the document
-        try:
-            # Try UTF-8 first
-            text = textract.process(temp_path).decode('utf-8')
-        except UnicodeDecodeError:
-            # If UTF-8 fails, try other encodings
+        # Extract text from the document with timeout
+        def extract_with_timeout(file_path, timeout=60):
+            """Extract text with timeout to prevent hanging"""
             try:
-                text = textract.process(temp_path).decode('cp1251')  # Windows Cyrillic
-            except UnicodeDecodeError:
-                # Last resort - use 'replace' to handle unknown characters
-                text = textract.process(temp_path).decode('utf-8', errors='replace')
+                # Use subprocess with timeout for textract
+                result = subprocess.run(
+                    ['python', '-c', f"import textract; print(textract.process('{file_path}').decode('utf-8', errors='replace'))"],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+                if result.returncode == 0:
+                    return result.stdout
+                else:
+                    # Fallback to direct textract if subprocess fails
+                    return textract.process(file_path).decode('utf-8', errors='replace')
+            except subprocess.TimeoutExpired:
+                logger.error(f'Text extraction timed out for {file_path}')
+                raise Exception('Document processing timed out')
+            except Exception as e:
+                logger.error(f'Text extraction failed: {str(e)}')
+                # Try direct textract as last resort
+                return textract.process(file_path).decode('utf-8', errors='replace')
+        
+        text = extract_with_timeout(temp_path)
         
         logger.info(f'Text extracted successfully from {original_filename}')
         
@@ -112,11 +134,27 @@ def process_document(temp_path, original_filename):
             'text': text,
             'status': 'completed'
         }
+    except SoftTimeLimitExceeded:
+        logger.error(f'Task timed out processing {original_filename}')
+        # Clean up temp file if it exists
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+        return {
+            'filename': original_filename,
+            'error': 'Processing timed out',
+            'status': 'failed'
+        }
     except Exception as e:
         logger.error(f'Error processing document: {str(e)}')
         # Clean up temp file if it exists
         if os.path.exists(temp_path):
-            os.remove(temp_path)
+            try:
+                os.remove(temp_path)
+            except:
+                pass
         return {
             'filename': original_filename,
             'error': str(e),
@@ -152,8 +190,17 @@ def convert_document():
         # Generate a unique filename to avoid collisions
         unique_filename = f"{uuid.uuid4()}_{file.filename}"
         temp_path = f'/tmp/{unique_filename}'
-        file.save(temp_path)
-        logger.info(f'File saved temporarily at {temp_path}')
+        
+        # Save file with size check
+        try:
+            file.save(temp_path)
+            logger.info(f'File saved temporarily at {temp_path}')
+        except RequestEntityTooLarge:
+            logger.error('File too large')
+            return jsonify({'error': 'File size exceeds maximum allowed'}), 413
+        except Exception as e:
+            logger.error(f'Failed to save file: {str(e)}')
+            return jsonify({'error': 'Failed to save uploaded file'}), 500
         
         if async_processing:
             # Process the document asynchronously
@@ -166,17 +213,44 @@ def convert_document():
                 'status_url': url_for('get_task_status', task_id=task.id, _external=True)
             })
         else:
-            # Process the document synchronously (original behavior)
-            try:
-                # Try UTF-8 first
-                text = textract.process(temp_path).decode('utf-8')
-            except UnicodeDecodeError:
-                # If UTF-8 fails, try other encodings
+            # Process the document synchronously with timeout
+            def extract_sync_with_timeout(file_path, timeout=30):
+                """Extract text synchronously with timeout"""
                 try:
-                    text = textract.process(temp_path).decode('cp1251')  # Windows Cyrillic
-                except UnicodeDecodeError:
-                    # Last resort - use 'replace' to handle unknown characters
-                    text = textract.process(temp_path).decode('utf-8', errors='replace')
+                    # Set alarm for timeout
+                    def timeout_handler(signum, frame):
+                        raise TimeoutError('Text extraction timed out')
+                    
+                    # Only use signal on Unix systems
+                    if hasattr(signal, 'SIGALRM'):
+                        signal.signal(signal.SIGALRM, timeout_handler)
+                        signal.alarm(timeout)
+                    
+                    try:
+                        text = textract.process(file_path).decode('utf-8', errors='replace')
+                    finally:
+                        if hasattr(signal, 'SIGALRM'):
+                            signal.alarm(0)  # Cancel the alarm
+                    
+                    return text
+                except TimeoutError:
+                    logger.error(f'Sync text extraction timed out')
+                    raise Exception('Document processing timed out')
+                except Exception as e:
+                    logger.error(f'Sync text extraction error: {str(e)}')
+                    raise
+            
+            try:
+                text = extract_sync_with_timeout(temp_path)
+            except Exception as e:
+                # Clean up temp file
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
+                logger.error(f'Failed to extract text: {str(e)}')
+                return jsonify({'error': f'Failed to process document: {str(e)}'}), 500
             
             logger.info(f'Text extracted successfully from {file.filename}')
             
@@ -192,6 +266,12 @@ def convert_document():
     
     except Exception as e:
         logger.error(f'Error processing document: {str(e)}')
+        # Clean up temp file if it exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
         return jsonify({'error': str(e)}), 500
 
 @app.route('/task/<task_id>', methods=['GET'])
