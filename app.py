@@ -21,6 +21,8 @@ from redis_manager import redis_manager
 from circuit_breaker import with_textract_circuit_breaker, textract_circuit_breaker, CircuitBreakerOpenException
 from graceful_shutdown import shutdown_manager, graceful_shutdown_middleware
 from monitoring import metrics_collector, create_monitoring_endpoints
+from office_processor import office_processor
+from document_extractor import document_extractor
 
 # Configure logging
 logging.basicConfig(
@@ -98,6 +100,33 @@ def health_check():
     logger.info('Health check endpoint accessed')
     return jsonify({'status': 'ok'})
 
+@app.route('/formats', methods=['GET'])
+def supported_formats():
+    """Get list of supported document formats"""
+    logger.info('Supported formats endpoint accessed')
+    
+    try:
+        formats = document_extractor.get_supported_formats()
+        
+        return jsonify({
+            'supported_formats': formats,
+            'office_documents': {
+                'formats': formats['office_documents'],
+                'description': 'Microsoft Office documents (Excel, PowerPoint)',
+                'features': ['Text extraction', 'Metadata extraction', 'Multi-sheet/slide support']
+            },
+            'textract_documents': {
+                'formats': formats['textract_documents'],
+                'description': 'Documents supported by textract library',
+                'features': ['Text extraction', 'OCR support', 'Multiple encodings']
+            },
+            'total_supported': len(formats['all_supported'])
+        })
+    
+    except Exception as e:
+        logger.error(f'Error getting supported formats: {e}')
+        return jsonify({'error': 'Failed to retrieve supported formats'}), 500
+
 @app.route('/cleanup', methods=['POST'])
 @require_api_key
 def trigger_cleanup():
@@ -125,32 +154,12 @@ def process_document(temp_path, original_filename):
     logger.info(f'Processing document: {original_filename}')
     
     try:
-        # Extract text from the document with timeout and circuit breaker
-        @with_textract_circuit_breaker
-        def extract_with_timeout(file_path, timeout=60):
-            """Extract text with timeout to prevent hanging"""
-            try:
-                # Use subprocess with timeout for textract
-                result = subprocess.run(
-                    ['python', '-c', f"import textract; print(textract.process('{file_path}').decode('utf-8', errors='replace'))"],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout
-                )
-                if result.returncode == 0:
-                    return result.stdout
-                else:
-                    # Fallback to direct textract if subprocess fails
-                    return textract.process(file_path).decode('utf-8', errors='replace')
-            except subprocess.TimeoutExpired:
-                logger.error(f'Text extraction timed out for {file_path}')
-                raise Exception('Document processing timed out')
-            except Exception as e:
-                logger.error(f'Text extraction failed: {str(e)}')
-                # Try direct textract as last resort
-                return textract.process(file_path).decode('utf-8', errors='replace')
+        # Use enhanced document extractor for all formats
+        extraction_result = document_extractor.extract_text(temp_path, timeout=60)
         
-        text = extract_with_timeout(temp_path)
+        text = extraction_result['text']
+        metadata = extraction_result.get('metadata', {})
+        file_info = extraction_result.get('file_info', {})
         
         logger.info(f'Text extracted successfully from {original_filename}')
         
@@ -160,7 +169,10 @@ def process_document(temp_path, original_filename):
         return {
             'filename': original_filename,
             'text': text,
-            'status': 'completed'
+            'status': 'completed',
+            'metadata': metadata,
+            'file_info': file_info,
+            'extraction_method': extraction_result.get('extraction_method', 'unknown')
         }
     except SoftTimeLimitExceeded:
         logger.error(f'Task timed out processing {original_filename}')
@@ -265,36 +277,12 @@ def _process_convert_request(start_time):
                 'status_url': url_for('get_task_status', task_id=task.id, _external=True)
             })
         else:
-            # Process the document synchronously with timeout and circuit breaker
-            @with_textract_circuit_breaker
-            def extract_sync_with_timeout(file_path, timeout=30):
-                """Extract text synchronously with timeout"""
-                try:
-                    # Set alarm for timeout
-                    def timeout_handler(signum, frame):
-                        raise TimeoutError('Text extraction timed out')
-                    
-                    # Only use signal on Unix systems
-                    if hasattr(signal, 'SIGALRM'):
-                        signal.signal(signal.SIGALRM, timeout_handler)
-                        signal.alarm(timeout)
-                    
-                    try:
-                        text = textract.process(file_path).decode('utf-8', errors='replace')
-                    finally:
-                        if hasattr(signal, 'SIGALRM'):
-                            signal.alarm(0)  # Cancel the alarm
-                    
-                    return text
-                except TimeoutError:
-                    logger.error(f'Sync text extraction timed out')
-                    raise Exception('Document processing timed out')
-                except Exception as e:
-                    logger.error(f'Sync text extraction error: {str(e)}')
-                    raise
-            
+            # Process the document synchronously using enhanced extractor
             try:
-                text = extract_sync_with_timeout(temp_path)
+                extraction_result = document_extractor.extract_text(temp_path, timeout=30)
+                text = extraction_result['text']
+                metadata = extraction_result.get('metadata', {})
+                file_info = extraction_result.get('file_info', {})
             except Exception as e:
                 # Clean up temp file
                 if os.path.exists(temp_path):
@@ -310,13 +298,16 @@ def _process_convert_request(start_time):
             # Remove temporary file
             os.remove(temp_path)
             
-            # Return the extracted text
+            # Return the extracted text with enhanced metadata
             response_time = time.time() - start_time
             metrics_collector.record_request(True, response_time)
             return jsonify({
                 'filename': file.filename,
                 'text': text,
-                'status': 'completed'
+                'status': 'completed',
+                'metadata': metadata,
+                'file_info': file_info,
+                'extraction_method': extraction_result.get('extraction_method', 'unknown')
             })
     
     except Exception as e:
