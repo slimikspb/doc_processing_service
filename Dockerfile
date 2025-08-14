@@ -34,8 +34,10 @@ COPY circuit_breaker.py .
 COPY graceful_shutdown.py .
 COPY monitoring.py .
 COPY health_checks.py .
+COPY simple_health_check.py .
 COPY office_processor.py .
 COPY document_extractor.py .
+COPY fallback_extractor.py .
 
 # Expose the port the app runs on
 EXPOSE 5000
