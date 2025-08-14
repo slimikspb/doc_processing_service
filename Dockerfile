@@ -25,6 +25,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code
 COPY app.py .
 COPY file_cleanup.py .
+COPY redis_manager.py .
+COPY circuit_breaker.py .
+COPY graceful_shutdown.py .
+COPY monitoring.py .
+COPY health_checks.py .
 
 # Expose the port the app runs on
 EXPOSE 5000

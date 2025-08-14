@@ -16,6 +16,12 @@ from celery.schedules import crontab
 from celery.exceptions import SoftTimeLimitExceeded
 from werkzeug.exceptions import RequestEntityTooLarge
 
+# Import our enhanced modules
+from redis_manager import redis_manager
+from circuit_breaker import with_textract_circuit_breaker, textract_circuit_breaker, CircuitBreakerOpenException
+from graceful_shutdown import shutdown_manager, graceful_shutdown_middleware
+from monitoring import metrics_collector, create_monitoring_endpoints
+
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -26,14 +32,35 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
+# Apply graceful shutdown middleware
+app = graceful_shutdown_middleware(app)
+
+# Add monitoring endpoints
+app = create_monitoring_endpoints(app)
+
 # Import file cleanup utilities
 from file_cleanup import cleanup_temp_files, get_temp_file_size_mb, TEMP_DIR
 
-# Configure Celery
+# Configure Celery with Redis manager
 celery = Celery(
     app.name,
     broker=os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
     backend=os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+)
+
+# Configure Celery with retry and timeout settings
+celery.conf.update(
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
+    broker_connection_retry_on_startup=True,
+    broker_connection_retry=True,
+    broker_connection_max_retries=10,
+    task_reject_on_worker_lost=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1
 )
 
 # Configure periodic tasks for cleanup
@@ -98,7 +125,8 @@ def process_document(temp_path, original_filename):
     logger.info(f'Processing document: {original_filename}')
     
     try:
-        # Extract text from the document with timeout
+        # Extract text from the document with timeout and circuit breaker
+        @with_textract_circuit_breaker
         def extract_with_timeout(file_path, timeout=60):
             """Extract text with timeout to prevent hanging"""
             try:
@@ -165,7 +193,29 @@ def process_document(temp_path, original_filename):
 @require_api_key
 def convert_document():
     logger.info('Convert endpoint accessed')
+    start_time = time.time()
     
+    try:
+        with shutdown_manager.request_context():
+            return _process_convert_request(start_time)
+    except RuntimeError as e:
+        # Service is shutting down
+        logger.warning(f'Request rejected during shutdown: {e}')
+        return jsonify({'error': 'Service is shutting down'}), 503
+    except CircuitBreakerOpenException as e:
+        # Circuit breaker is open
+        response_time = time.time() - start_time
+        metrics_collector.record_request(False, response_time)
+        logger.warning(f'Request failed due to circuit breaker: {e}')
+        return jsonify({'error': 'Service temporarily unavailable due to high failure rate'}), 503
+    except Exception as e:
+        response_time = time.time() - start_time
+        metrics_collector.record_request(False, response_time)
+        logger.error(f'Unexpected error in convert endpoint: {e}')
+        return jsonify({'error': 'Internal server error'}), 500
+
+def _process_convert_request(start_time):
+    """Process the convert request with proper error handling and metrics"""
     # Log request details for debugging
     logger.debug(f'Request method: {request.method}')
     logger.debug(f'Request headers: {request.headers}')
@@ -207,13 +257,16 @@ def convert_document():
             task = process_document.delay(temp_path, file.filename)
             
             # Return task ID for status checking
+            response_time = time.time() - start_time
+            metrics_collector.record_request(True, response_time)
             return jsonify({
                 'task_id': task.id,
                 'status': 'processing',
                 'status_url': url_for('get_task_status', task_id=task.id, _external=True)
             })
         else:
-            # Process the document synchronously with timeout
+            # Process the document synchronously with timeout and circuit breaker
+            @with_textract_circuit_breaker
             def extract_sync_with_timeout(file_path, timeout=30):
                 """Extract text synchronously with timeout"""
                 try:
@@ -258,6 +311,8 @@ def convert_document():
             os.remove(temp_path)
             
             # Return the extracted text
+            response_time = time.time() - start_time
+            metrics_collector.record_request(True, response_time)
             return jsonify({
                 'filename': file.filename,
                 'text': text,

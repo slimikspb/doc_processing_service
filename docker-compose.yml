@@ -6,6 +6,14 @@ services:
     ports:
       - "5001:5000"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
       interval: 30s
@@ -29,14 +37,44 @@ services:
   redis:
     image: redis:alpine
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - redis_data:/data
     # Not exposing Redis externally for better security
     # Redis is only accessible from within the Docker network
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 384mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10 --save 60 10000
 
   celery-worker:
     build: .
-    command: celery -A app.celery worker --loglevel=info --max-tasks-per-child=10 --pool=prefork
+    command: celery -A app.celery worker --loglevel=info --max-tasks-per-child=10 --pool=prefork --concurrency=2
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD-SHELL", "python health_checks.py celery-worker"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 30s
     volumes:
       # Using a named volume for application code instead of bind mounts
       # This is more compatible with Portainer deployments
@@ -53,6 +91,20 @@ services:
     build: .
     command: celery -A app.celery beat --loglevel=info
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    healthcheck:
+      test: ["CMD-SHELL", "python health_checks.py celery-beat"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     volumes:
       # Using a named volume for application code instead of bind mounts
       # This is more compatible with Portainer deployments
@@ -69,3 +121,6 @@ volumes:
   app_code:
     # This volume will contain your application code
   temp_files:
+    # Temporary files storage with size limit
+  redis_data:
+    # Redis persistence data
