@@ -3,7 +3,7 @@ FROM python:3.9-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for textract and its dependencies
+# Install system dependencies for textract and office document processing
 RUN apt-get update && apt-get install -y \
     antiword \
     unrtf \
@@ -15,6 +15,10 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     supervisor \
+    # Additional dependencies for pandas and Excel processing
+    libssl-dev \
+    libffi-dev \
+    python3-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -30,6 +34,8 @@ COPY circuit_breaker.py .
 COPY graceful_shutdown.py .
 COPY monitoring.py .
 COPY health_checks.py .
+COPY office_processor.py .
+COPY document_extractor.py .
 
 # Expose the port the app runs on
 EXPOSE 5000
