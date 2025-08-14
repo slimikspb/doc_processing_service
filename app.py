@@ -68,7 +68,7 @@ celery.conf.update(
 # Configure periodic tasks for cleanup
 celery.conf.beat_schedule = {
     'cleanup-temp-files': {
-        'task': 'app.cleanup_task',
+        'task': 'app.cleanup_temp_files',
         'schedule': crontab(minute='0', hour='*/1'),  # Run every hour
     },
 }
