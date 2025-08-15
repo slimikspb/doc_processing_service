@@ -1,5 +1,8 @@
 FROM python:3.9-slim
 
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
 # Set working directory
 WORKDIR /app
 
@@ -38,6 +41,15 @@ COPY simple_health_check.py .
 COPY office_processor.py .
 COPY document_extractor.py .
 COPY fallback_extractor.py .
+
+# Create temp directory and set permissions
+RUN mkdir -p /tmp && chmod 755 /tmp
+
+# Change ownership of app directory to non-root user
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 # Expose the port the app runs on
 EXPOSE 5000
