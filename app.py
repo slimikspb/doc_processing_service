@@ -16,13 +16,34 @@ from celery.schedules import crontab
 from celery.exceptions import SoftTimeLimitExceeded
 from werkzeug.exceptions import RequestEntityTooLarge
 
-# Import our enhanced modules
-from redis_manager import redis_manager
-from circuit_breaker import with_textract_circuit_breaker, textract_circuit_breaker, CircuitBreakerOpenException
-from graceful_shutdown import shutdown_manager, graceful_shutdown_middleware
-from monitoring import metrics_collector, create_monitoring_endpoints
-from office_processor import office_processor
-from document_extractor import document_extractor
+# Import our enhanced modules with graceful failure handling
+try:
+    from redis_manager import redis_manager
+    from circuit_breaker import with_textract_circuit_breaker, textract_circuit_breaker, CircuitBreakerOpenException
+    from graceful_shutdown import shutdown_manager, graceful_shutdown_middleware
+    from monitoring import metrics_collector, create_monitoring_endpoints
+    
+    # Office processing modules (may fail if dependencies not installed)
+    try:
+        from office_processor import office_processor
+        from document_extractor import document_extractor
+        OFFICE_SUPPORT_AVAILABLE = True
+        logger.info("Office document processing modules loaded successfully")
+    except ImportError as e:
+        logger.warning(f"Office processing not available: {e}")
+        OFFICE_SUPPORT_AVAILABLE = False
+        # Use fallback extractor
+        from fallback_extractor import fallback_document_extractor
+        office_processor = None
+        document_extractor = fallback_document_extractor
+        
+except ImportError as e:
+    logger.error(f"Critical module import failed: {e}")
+    # Create minimal fallback objects to prevent startup failure
+    redis_manager = None
+    shutdown_manager = None
+    metrics_collector = None
+    OFFICE_SUPPORT_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(
@@ -35,10 +56,12 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Apply graceful shutdown middleware
-app = graceful_shutdown_middleware(app)
+# Apply enhanced features only if modules loaded successfully
+if shutdown_manager:
+    app = graceful_shutdown_middleware(app)
 
-# Add monitoring endpoints
-app = create_monitoring_endpoints(app)
+if metrics_collector:
+    app = create_monitoring_endpoints(app)
 
 # Import file cleanup utilities
 from file_cleanup import cleanup_temp_files, get_temp_file_size_mb, TEMP_DIR
