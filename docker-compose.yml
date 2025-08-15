@@ -59,7 +59,7 @@ services:
 
   celery-worker:
     build: .
-    command: celery -A app.celery worker --loglevel=info --max-tasks-per-child=10 --pool=prefork --concurrency=2
+    command: ["./startup.sh", "celery", "-A", "app_full.celery", "worker", "--loglevel=info", "--max-tasks-per-child=10", "--pool=prefork", "--concurrency=2"]
     restart: unless-stopped
     deploy:
       resources:
@@ -89,7 +89,7 @@ services:
       
   celery-beat:
     build: .
-    command: celery -A app.celery beat --loglevel=info
+    command: ["./startup.sh", "celery", "-A", "app_full.celery", "beat", "--loglevel=info"]
     restart: unless-stopped
     deploy:
       resources:

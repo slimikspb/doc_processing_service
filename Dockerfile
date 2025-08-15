@@ -27,10 +27,15 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    # Verify Office processing dependencies are installed correctly
+    python -c "import openpyxl; import xlrd; import pandas; from pptx import Presentation; print('✓ Office dependencies verified')" || \
+    (echo "Reinstalling Office dependencies..." && pip install --force-reinstall openpyxl xlrd xlwt pandas python-pptx oletools)
 
 # Copy the application code
-COPY app.py .
+COPY app_full.py app.py
+COPY app_full.py .
 COPY file_cleanup.py .
 COPY redis_manager.py .
 COPY circuit_breaker.py .
@@ -41,12 +46,14 @@ COPY simple_health_check.py .
 COPY office_processor.py .
 COPY document_extractor.py .
 COPY fallback_extractor.py .
+COPY startup.sh .
 
 # Create temp directory and set permissions
 RUN mkdir -p /tmp && chmod 755 /tmp
 
-# Change ownership of app directory to non-root user
-RUN chown -R appuser:appuser /app
+# Make startup script executable and change ownership
+RUN chmod +x /app/startup.sh && \
+    chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
@@ -54,5 +61,5 @@ USER appuser
 # Expose the port the app runs on
 EXPOSE 5000
 
-# Command to run the application with Gunicorn (with timeout and worker recycling)
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "30", "--max-requests", "1000", "--max-requests-jitter", "50", "--worker-class", "sync", "app:app"]
+# Command to run the application with startup script and Gunicorn
+CMD ["./startup.sh", "gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "30", "--max-requests", "1000", "--max-requests-jitter", "50", "--worker-class", "sync", "app_full:app"]
