@@ -21,9 +21,7 @@ services:
       retries: 3
       start_period: 20s
     volumes:
-      # Using a named volume for application code instead of bind mounts
-      # This is more compatible with Portainer deployments
-      - app_code:/app
+      # Only mount temp files - Docker image provides the application code
       - temp_files:/tmp
     environment:
       - PORT=${PORT:-5000}
@@ -76,9 +74,7 @@ services:
       retries: 3
       start_period: 60s
     volumes:
-      # Using a named volume for application code instead of bind mounts
-      # This is more compatible with Portainer deployments
-      - app_code:/app
+      # Only mount temp files - Docker image provides the application code
       - temp_files:/tmp
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
@@ -105,10 +101,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 90s
-    volumes:
-      # Using a named volume for application code instead of bind mounts
-      # This is more compatible with Portainer deployments
-      - app_code:/app
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -118,8 +110,6 @@ services:
       - celery-worker
 
 volumes:
-  app_code:
-    # This volume will contain your application code
   temp_files:
     # Temporary files storage with size limit
   redis_data:
