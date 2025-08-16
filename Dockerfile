@@ -31,7 +31,9 @@ RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     # Verify Office processing dependencies are installed correctly
     python -c "import openpyxl; import xlrd; import pandas; from pptx import Presentation; print('✓ Office dependencies verified')" || \
-    (echo "Reinstalling Office dependencies..." && pip install --force-reinstall openpyxl xlrd xlwt pandas python-pptx oletools)
+    (echo "Reinstalling Office dependencies..." && pip install --force-reinstall openpyxl xlrd xlwt pandas python-pptx oletools) && \
+    # Verify celery is accessible
+    which celery && celery --version
 
 # Copy the application code
 COPY app_full.py app.py
@@ -55,6 +57,9 @@ RUN chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
+
+# Set PATH to ensure celery and other binaries are accessible
+ENV PATH="/usr/local/bin:$PATH"
 
 # Expose the port the app runs on
 EXPOSE 5000
