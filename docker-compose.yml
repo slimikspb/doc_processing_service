@@ -3,6 +3,7 @@ version: '3'
 services:
   doc-converter:
     build: .
+    command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "30", "--max-requests", "1000", "--max-requests-jitter", "50", "--worker-class", "sync", "app_full:app"]
     ports:
       - "5001:5000"
     restart: unless-stopped
@@ -57,7 +58,7 @@ services:
 
   celery-worker:
     build: .
-    command: ["/app/startup.sh", "celery", "-A", "app_full.celery", "worker", "--loglevel=info", "--max-tasks-per-child=10", "--pool=prefork", "--concurrency=2"]
+    command: ["celery", "-A", "app_full.celery", "worker", "--loglevel=info", "--max-tasks-per-child=10", "--pool=prefork", "--concurrency=2"]
     restart: unless-stopped
     deploy:
       resources:
@@ -85,7 +86,7 @@ services:
       
   celery-beat:
     build: .
-    command: ["/app/startup.sh", "celery", "-A", "app_full.celery", "beat", "--loglevel=info"]
+    command: ["celery", "-A", "app_full.celery", "beat", "--loglevel=info"]
     restart: unless-stopped
     deploy:
       resources:

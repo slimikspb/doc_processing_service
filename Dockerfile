@@ -46,15 +46,12 @@ COPY simple_health_check.py .
 COPY office_processor.py .
 COPY document_extractor.py .
 COPY fallback_extractor.py .
-COPY startup.sh /app/startup.sh
 
 # Create temp directory and set permissions
 RUN mkdir -p /tmp && chmod 755 /tmp
 
-# Make startup script executable and change ownership
-RUN chmod +x /app/startup.sh && \
-    chown -R appuser:appuser /app && \
-    ls -la /app/startup.sh
+# Change ownership to appuser
+RUN chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
@@ -62,5 +59,5 @@ USER appuser
 # Expose the port the app runs on
 EXPOSE 5000
 
-# Command to run the application with startup script and Gunicorn
-CMD ["/app/startup.sh", "gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "30", "--max-requests", "1000", "--max-requests-jitter", "50", "--worker-class", "sync", "app_full:app"]
+# Command to run the application directly with Gunicorn
+CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "30", "--max-requests", "1000", "--max-requests-jitter", "50", "--worker-class", "sync", "app_full:app"]
