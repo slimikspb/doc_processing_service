@@ -21,13 +21,11 @@ services:
       retries: 3
       start_period: 20s
     volumes:
-      # Using a named volume for application code instead of bind mounts
-      # This is more compatible with Portainer deployments
-      - app_code:/app
+      # Only mount temp files - Docker image provides the application code
       - temp_files:/tmp
     environment:
       - PORT=${PORT:-5000}
-      - MAX_CONTENT_LENGTH=${MAX_CONTENT_LENGTH:-16777216}  # 16MB in bytes
+      - MAX_CONTENT_LENGTH=${MAX_CONTENT_LENGTH:-52428800}  # 50MB in bytes
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - API_KEY=${API_KEY:-default_dev_key}
@@ -59,7 +57,7 @@ services:
 
   celery-worker:
     build: .
-    command: celery -A app.celery worker --loglevel=info --max-tasks-per-child=10 --pool=prefork --concurrency=2
+    command: ["./startup.sh", "celery", "-A", "app_full.celery", "worker", "--loglevel=info", "--max-tasks-per-child=10", "--pool=prefork", "--concurrency=2"]
     restart: unless-stopped
     deploy:
       resources:
@@ -76,9 +74,7 @@ services:
       retries: 3
       start_period: 60s
     volumes:
-      # Using a named volume for application code instead of bind mounts
-      # This is more compatible with Portainer deployments
-      - app_code:/app
+      # Only mount temp files - Docker image provides the application code
       - temp_files:/tmp
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
@@ -89,7 +85,7 @@ services:
       
   celery-beat:
     build: .
-    command: celery -A app.celery beat --loglevel=info
+    command: ["./startup.sh", "celery", "-A", "app_full.celery", "beat", "--loglevel=info"]
     restart: unless-stopped
     deploy:
       resources:
@@ -105,10 +101,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 90s
-    volumes:
-      # Using a named volume for application code instead of bind mounts
-      # This is more compatible with Portainer deployments
-      - app_code:/app
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -118,8 +110,6 @@ services:
       - celery-worker
 
 volumes:
-  app_code:
-    # This volume will contain your application code
   temp_files:
     # Temporary files storage with size limit
   redis_data:
