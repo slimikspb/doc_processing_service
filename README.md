@@ -1,172 +1,179 @@
-# Document Converter Service
+# Document Processing Service
 
-Converts Word documents (DOC, DOCX), ODT, and RTF files to plain text. Built with Flask, Celery, and Redis for reliable async processing.
+A production-ready Flask microservice that converts various document formats (PDF, DOCX, XLSX, PPTX, TXT, RTF) to plain text JSON. Features reliable document processing using stable libraries instead of textract, with Celery for async processing and Redis for task queue management.
 
-## Quick Start
+## ✨ Features
+
+- **Multiple Document Formats**: PDF, DOCX, XLSX, PPTX, TXT, RTF
+- **Reliable Processing**: Uses PyMuPDF, pdfplumber, python-docx, openpyxl, python-pptx instead of problematic textract
+- **Async & Sync Processing**: Choose between immediate or background processing
+- **Production Ready**: Multi-stage Docker builds, health checks, non-root security
+- **API Key Authentication**: Secure endpoint access
+- **Comprehensive Monitoring**: Health, metrics, and status endpoints
+
+## 🚀 Quick Start
 
 ```bash
-# Start everything
+# Start all services
 docker-compose up -d
 
-# Test it works
+# Check health
 curl http://localhost:5001/health
 
-# Convert a document (replace YOUR_API_KEY with actual key from docker-compose.yml)
+# List supported formats
+curl http://localhost:5001/formats
+
+# Test document conversion
+python test_service.py --file your_document.pdf --api-key default_dev_key
+```
+
+## 📋 API Endpoints
+
+### Health Check
+```bash
+GET /health
+# No authentication required
+curl http://localhost:5001/health
+```
+
+### Supported Formats
+```bash
+GET /formats  
+# No authentication required
+curl http://localhost:5001/formats
+```
+
+### Convert Document (Sync)
+```bash
+POST /convert
 curl -X POST \
-  -H "X-API-Key: YOUR_API_KEY" \
-  -F "document=@your-file.docx" \
+  -H "X-API-Key: default_dev_key" \
+  -F "file=@document.pdf" \
   http://localhost:5001/convert
 ```
 
-## API Endpoints
-
-### 1. Convert Document
-**POST** `/convert`
-
-**Headers:**
-- `X-API-Key: your_api_key` (required)
-
-**Body:**
-- Form field name: `document` (NOT "file")
-- Supported formats: DOC, DOCX, ODT, RTF, PPTX, PDF
-
-**Sync mode (default):**
+### Convert Document (Async)
 ```bash
+POST /convert?async=true
 curl -X POST \
   -H "X-API-Key: default_dev_key" \
-  -F "document=@test.docx" \
-  http://localhost:5001/convert
+  -F "file=@document.pdf" \
+  "http://localhost:5001/convert?async=true"
 ```
 
-**Async mode (for large files):**
+### Check Task Status
 ```bash
-curl -X POST \
-  -H "X-API-Key: default_dev_key" \
-  -F "document=@large.docx" \
-  http://localhost:5001/convert?async=true
-```
-
-Returns task_id for checking status.
-
-### 2. Check Async Task Status
-**GET** `/task/<task_id>`
-
-```bash
+GET /task/{task_id}
 curl -H "X-API-Key: default_dev_key" \
-  http://localhost:5001/task/abc-123-def
+  http://localhost:5001/task/your-task-id
 ```
 
-### 3. Health Check
-**GET** `/health` (no auth required)
-
+### Manual Cleanup
 ```bash
-curl http://localhost:5001/health
-```
-
-### 4. Manual Cleanup
-**POST** `/cleanup`
-
-```bash
-curl -X POST -H "X-API-Key: default_dev_key" \
+POST /cleanup
+curl -X POST \
+  -H "X-API-Key: default_dev_key" \
   http://localhost:5001/cleanup
 ```
 
-## n8n Integration
+## 🔧 Configuration
 
-### HTTP Request Node Configuration:
+Set environment variables in docker-compose.yml:
 
-1. **Method:** POST
-2. **URL:** `http://doc-converter:5001/convert` (or your service URL)
-3. **Authentication:** 
-   - Type: Generic Credential → Header Auth
-   - Name: `X-API-Key`
-   - Value: Your API key
-4. **Send Body:** Yes
-5. **Body Content Type:** Form-Data
-6. **Body Parameters:**
-   - Parameter Type: Form Data
-   - Name: `document` ⚠️ (NOT "file")
-   - Input Data Field Name: `data` (or your binary property name)
+- `API_KEY`: Authentication key (default: `default_dev_key`)
+- `MAX_CONTENT_LENGTH`: Max file size in bytes (default: 50MB)
+- `CELERY_BROKER_URL`: Redis connection for Celery
+- `CELERY_RESULT_BACKEND`: Redis backend for results
 
-### Common n8n Errors:
-
-- **"No document file provided"** → Check field name is `document` not `file`
-- **"source.on is not a function"** → Use Input Data Field Name instead of expression
-- **401 Unauthorized** → Add X-API-Key header
-
-## Environment Variables
-
-Set in `docker-compose.yml`:
-
-```yaml
-API_KEY: your_secure_key_here        # Default: default_dev_key
-MAX_CONTENT_LENGTH: 16777216         # Max file size (16MB default)
-PORT: 5000                            # Internal port (mapped to 5001)
-CELERY_BROKER_URL: redis://redis:6379/0
-```
-
-## Testing
+## 🧪 Testing
 
 ```bash
-# Basic test script
+# Run comprehensive tests
 python test_service.py
 
-# Test with specific file
-python test_service.py --file test.docx --api-key your_key
+# Test with custom file
+python test_service.py --file path/to/document.pdf
 
-# Test async mode
-python test_service.py --file large.docx --async-mode
+# Test async processing
+python test_service.py --async-mode
 
-# Test multiple formats
-python test_multiple_formats.py
+# Test cleanup
+python test_service.py --cleanup
 ```
 
-## Monitoring
+## 📊 Supported Document Formats
 
+- **PDF**: `.pdf` (PyMuPDF + pdfplumber)
+- **Word**: `.docx`, `.doc` (python-docx)
+- **Excel**: `.xlsx`, `.xls` (openpyxl + xlrd)
+- **PowerPoint**: `.pptx` (python-pptx)
+- **Text**: `.txt`, `.rtf` (chardet encoding detection)
+
+## 🔄 Docker Architecture
+
+The service uses a distributed architecture with four main components:
+
+1. **Flask API Server** (`doc-converter`) - Main REST API
+2. **Celery Workers** (`celery-worker`) - Async document processing
+3. **Celery Beat** (`celery-beat`) - Scheduled cleanup tasks
+4. **Redis** (`redis`) - Message broker and result backend
+
+## 🛡️ Production Features
+
+- **Multi-stage Docker builds** for optimized image size
+- **Non-root user execution** for security
+- **Health checks** for all services
+- **Resource limits** to prevent resource exhaustion
+- **Circuit breaker protection** for processing failures
+- **Automatic cleanup** of temporary files
+- **Graceful shutdown** handling
+
+## 🐛 Troubleshooting
+
+### Service Won't Start
 ```bash
-# View all logs
-docker-compose logs -f
-
-# Check specific service
-docker-compose logs doc-converter
-docker-compose logs celery-worker
-
-# Container status
+# Check container status
 docker-compose ps
-```
 
-## Troubleshooting
+# View logs
+docker-compose logs
 
-### Service won't start
-```bash
-docker-compose down
+# Rebuild if needed
 docker-compose build --no-cache
 docker-compose up -d
 ```
 
-### File size errors
-Increase MAX_CONTENT_LENGTH in docker-compose.yml (default 16MB)
+### File Upload Issues
+- Ensure form field name is `file` (not `document`)
+- Include `X-API-Key` header
+- Check file size is under 50MB limit
+- Verify file format is supported via `/formats` endpoint
 
-### Encoding errors
-Service automatically tries UTF-8, CP1251, then UTF-8 with replacement
+### Performance Issues
+- Use async processing for large files
+- Monitor `/health` endpoint for service status
+- Check Redis connection via health endpoint
 
-### Disk space issues
-- Cleanup runs hourly automatically
-- Manual cleanup: `POST /cleanup`
-- Check /tmp usage: `docker exec doc-converter df -h /tmp`
+## 📝 Response Format
 
-### Port conflicts
-Change external port in docker-compose.yml:
-```yaml
-ports:
-  - "8080:5000"  # Change 8080 to any free port
+### Successful Conversion
+```json
+{
+  "text": "Extracted document text...",
+  "metadata": {
+    "file_type": "pdf",
+    "file_size": 1024768,
+    "text_length": 5432,
+    "extractor": "reliable_extractor"
+  },
+  "status": "completed"
+}
 ```
 
-## Architecture
-
-- **Flask API** → Handles HTTP requests
-- **Celery Workers** → Process documents async
-- **Redis** → Message queue and result storage
-- **Celery Beat** → Hourly temp file cleanup
-
-Files are temporarily stored in `/tmp` with UUID prefixes and deleted after processing.
+### Error Response
+```json
+{
+  "error": "No file provided",
+  "status": "failed"
+}
+```
