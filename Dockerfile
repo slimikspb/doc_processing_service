@@ -25,14 +25,41 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    # Verify Office processing dependencies are installed correctly
-    python -c "import openpyxl; import xlrd; import pandas; from pptx import Presentation; print('✓ Office dependencies verified')" || \
-    (echo "Reinstalling Office dependencies..." && pip install --force-reinstall openpyxl xlrd xlwt pandas python-pptx oletools) && \
-    # Verify celery is accessible
+# Install Python dependencies in stages for better error handling
+RUN pip install --upgrade pip
+
+# Install core dependencies first
+RUN pip install --no-cache-dir \
+    flask==2.0.1 \
+    werkzeug==2.0.1 \
+    gunicorn==20.1.0 \
+    celery==5.2.3 \
+    redis==4.3.4 \
+    flask-cors==3.0.10 \
+    psutil==5.9.4
+
+# Install textract (can be problematic, so separate)
+RUN pip install --no-cache-dir textract==1.6.5
+
+# Install Office processing dependencies with compatible versions
+RUN pip install --no-cache-dir \
+    numpy==1.24.3 \
+    openpyxl==3.0.10 \
+    xlrd==2.0.1 \
+    xlwt==1.3.0
+
+# Install pandas with numpy already available
+RUN pip install --no-cache-dir pandas==1.5.3
+
+# Install PowerPoint processing
+RUN pip install --no-cache-dir \
+    python-pptx==0.6.21 \
+    oletools==0.60.1
+
+# Verify core installations work
+RUN python -c "import flask, celery, redis, textract; print('✓ Core dependencies OK')" && \
+    python -c "import openpyxl, xlrd, pandas; print('✓ Excel dependencies OK')" && \
+    python -c "from pptx import Presentation; print('✓ PowerPoint dependencies OK')" && \
     which celery && celery --version
 
 # Copy the application code
