@@ -60,6 +60,9 @@ COPY --chown=appuser:appuser simple_health_check.py .
 # Create temp directory with proper permissions
 RUN mkdir -p /tmp && chmod 755 /tmp && chown appuser:appuser /tmp
 
+# Ensure appuser can write to working directory (for celery beat schedule file)
+RUN chmod 755 /app && chown -R appuser:appuser /app
+
 # Switch to non-root user
 USER appuser
 
