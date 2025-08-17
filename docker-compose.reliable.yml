@@ -89,7 +89,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.reliable
-    command: ["/usr/local/bin/celery", "-A", "app.celery", "beat", "--loglevel=info"]
+    command: ["/usr/local/bin/celery", "-A", "app.celery", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     restart: unless-stopped
     deploy:
       resources:
