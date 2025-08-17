@@ -1,95 +1,77 @@
-FROM python:3.9-slim
+# syntax=docker/dockerfile:1
+FROM python:3.9-slim as builder
 
-# Create non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser appuser
-
-# Set working directory
-WORKDIR /app
-
-# Install system dependencies for textract and office document processing
-RUN apt-get update && apt-get install -y \
-    antiword \
-    unrtf \
-    poppler-utils \
-    libjpeg-dev \
-    libxml2-dev \
-    libxslt1-dev \
-    tesseract-ocr \
+# Build stage - install build dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     build-essential \
-    curl \
-    supervisor \
-    # Additional dependencies for pandas and Excel processing
-    libssl-dev \
-    libffi-dev \
-    python3-dev \
-    && apt-get clean \
+    gcc \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies in stages for better error handling
-RUN pip install --upgrade pip
+WORKDIR /app
 
-# Install core dependencies first
-RUN pip install --no-cache-dir \
-    flask==2.0.1 \
-    werkzeug==2.0.1 \
-    gunicorn==20.1.0 \
-    celery==5.2.3 \
-    redis==4.3.4 \
-    flask-cors==3.0.10 \
-    psutil==5.9.4
+# Install Python dependencies in builder stage
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip wheel --no-cache-dir --no-deps --wheel-dir /wheels -r requirements.txt
 
-# Install textract (can be problematic, so separate)
-RUN pip install --no-cache-dir textract==1.6.5
+# Production stage
+FROM python:3.9-slim
 
-# Install Office processing dependencies with compatible versions
-RUN pip install --no-cache-dir \
-    numpy==1.24.3 \
-    openpyxl==3.0.10 \
-    xlrd==2.0.1 \
-    xlwt==1.3.0
+# Install only runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install pandas with numpy already available
-RUN pip install --no-cache-dir pandas==1.5.3
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-# Install PowerPoint processing
-RUN pip install --no-cache-dir \
-    python-pptx==0.6.21 \
-    oletools==0.60.1
+WORKDIR /app
 
-# Verify core installations work
-RUN python -c "import flask, celery, redis, textract; print('✓ Core dependencies OK')" && \
-    python -c "import openpyxl, xlrd, pandas; print('✓ Excel dependencies OK')" && \
+# Python optimizations
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PATH="/usr/local/bin:$PATH"
+
+# Copy and install wheels from builder
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache /wheels/* && rm -rf /wheels
+
+# Verify critical dependencies
+RUN python -c "import flask, celery, redis; print('✓ Core dependencies OK')" && \
+    python -c "import fitz, pdfplumber; print('✓ PDF dependencies OK')" && \
+    python -c "import docx, openpyxl; print('✓ Office dependencies OK')" && \
     python -c "from pptx import Presentation; print('✓ PowerPoint dependencies OK')" && \
-    which celery && celery --version
+    which celery && which gunicorn
 
-# Copy the application code
-COPY app_full.py app.py
-COPY app_full.py .
-COPY file_cleanup.py .
-COPY redis_manager.py .
-COPY circuit_breaker.py .
-COPY graceful_shutdown.py .
-COPY monitoring.py .
-COPY health_checks.py .
-COPY simple_health_check.py .
-COPY office_processor.py .
-COPY document_extractor.py .
-COPY fallback_extractor.py .
+# Copy application code
+COPY --chown=appuser:appuser app.py .
+COPY --chown=appuser:appuser reliable_extractor.py .
+COPY --chown=appuser:appuser file_cleanup.py .
+COPY --chown=appuser:appuser redis_manager.py .
+COPY --chown=appuser:appuser circuit_breaker.py .
+COPY --chown=appuser:appuser graceful_shutdown.py .
+COPY --chown=appuser:appuser monitoring.py .
+COPY --chown=appuser:appuser health_checks.py .
+COPY --chown=appuser:appuser simple_health_check.py .
 
-# Create temp directory and set permissions
-RUN mkdir -p /tmp && chmod 755 /tmp
+# Create temp directory with proper permissions
+RUN mkdir -p /tmp && chmod 755 /tmp && chown appuser:appuser /tmp
 
-# Change ownership to appuser
-RUN chown -R appuser:appuser /app
+# Ensure appuser can write to working directory (for celery beat schedule file)
+RUN chmod 755 /app && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
 
-# Set PATH to ensure celery and other binaries are accessible
-ENV PATH="/usr/local/bin:$PATH"
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
 
-# Expose the port the app runs on
+# Expose port
 EXPOSE 5000
 
-# Command to run the application directly with Gunicorn
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "30", "--max-requests", "1000", "--max-requests-jitter", "50", "--worker-class", "sync", "app_full:app"]
+# Run with production server
+CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "30", "--max-requests", "1000", "--max-requests-jitter", "50", "--worker-class", "sync", "app:app"]
