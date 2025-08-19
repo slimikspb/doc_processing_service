@@ -1,3 +1,11 @@
+# Build and Push Docker Image to GHCR
+# 
+# Setup Instructions:
+# 1. Go to GitHub -> Settings -> Developer settings -> Personal access tokens -> Tokens (classic)
+# 2. Generate new token with 'write:packages' and 'read:packages' permissions
+# 3. Add token as repository secret named 'GHCR_TOKEN'
+# 4. Alternatively, ensure GITHUB_TOKEN has package write permissions enabled
+
 name: Build and Push Docker Image
 
 on:
@@ -27,13 +35,17 @@ jobs:
       with:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+        password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
         
     - name: Verify authentication
       run: |
         echo "Authenticated as: ${{ github.actor }}"
         echo "Registry: ${{ env.REGISTRY }}"
         echo "Image name: ${{ env.IMAGE_NAME }}"
+        echo "Testing registry access..."
+        docker pull hello-world
+        docker tag hello-world ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-auth || true
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-auth || echo "Test push failed, continuing with main build..."
 
     - name: Extract metadata
       id: meta
@@ -58,4 +70,15 @@ jobs:
         context: .
         push: true
         tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+        labels: |
+          ${{ steps.meta.outputs.labels }}
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.description=Document Processing Service - Flask microservice for converting documents to text
+          org.opencontainers.image.licenses=MIT
+          
+    - name: Cleanup test images
+      if: always()
+      run: |
+        # Remove test authentication image if it exists
+        docker rmi ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-auth || true
+        echo "Cleanup completed"
