@@ -16,7 +16,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push:
@@ -35,17 +35,14 @@ jobs:
       with:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
-        password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+        password: ${{ secrets.GHCR_TOKEN }}
         
-    - name: Verify authentication
+    - name: Verify configuration
       run: |
         echo "Authenticated as: ${{ github.actor }}"
         echo "Registry: ${{ env.REGISTRY }}"
         echo "Image name: ${{ env.IMAGE_NAME }}"
-        echo "Testing registry access..."
-        docker pull hello-world
-        docker tag hello-world ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-auth || true
-        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-auth || echo "Test push failed, continuing with main build..."
+        echo "Repository: ${{ github.repository }}"
 
     - name: Extract metadata
       id: meta
@@ -76,9 +73,3 @@ jobs:
           org.opencontainers.image.description=Document Processing Service - Flask microservice for converting documents to text
           org.opencontainers.image.licenses=MIT
           
-    - name: Cleanup test images
-      if: always()
-      run: |
-        # Remove test authentication image if it exists
-        docker rmi ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-auth || true
-        echo "Cleanup completed"
