@@ -20,6 +20,14 @@ except ImportError as e:
     logging.warning(f"Document processing not available: {e}")
     DOCUMENT_PROCESSING_AVAILABLE = False
 
+# Import raster detection module
+try:
+    from pdf_raster_detector import detect_pdf_raster_images, is_raster_detection_available
+    RASTER_DETECTION_AVAILABLE = is_raster_detection_available()
+except ImportError as e:
+    logging.warning(f"Raster detection not available: {e}")
+    RASTER_DETECTION_AVAILABLE = False
+
 try:
     from redis_manager import redis_manager
     from circuit_breaker import with_circuit_breaker, CircuitBreakerOpenException
@@ -47,6 +55,13 @@ app = Flask(__name__)
 # Configuration
 app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 52428800))  # 50MB
 app.config['UPLOAD_FOLDER'] = '/tmp'
+
+# API Key for authentication
+# Raster detection configuration
+RASTER_DETECTION_ENABLED = os.environ.get("RASTER_DETECTION_ENABLED", "true").lower() == "true"
+DEFAULT_MIN_IMAGE_SIZE = tuple(map(int, os.environ.get("DEFAULT_MIN_IMAGE_SIZE", "100,100").split(",")))
+DEFAULT_MAX_IMAGE_SIZE = tuple(map(int, os.environ.get("DEFAULT_MAX_IMAGE_SIZE", "5000,5000").split(",")))
+DEFAULT_RATIO_THRESHOLD = float(os.environ.get("DEFAULT_RATIO_THRESHOLD", "0.5"))
 
 # API Key for authentication
 API_KEY = os.environ.get('API_KEY', 'default_dev_key')
@@ -344,6 +359,123 @@ def manual_cleanup():
     try:
         task = cleanup_temp_files.delay()
         return jsonify({
+            "message": "Cleanup task started",
+            "task_id": task.id
+        })
+    except Exception as e:
+        logger.error(f"Error starting cleanup: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+@app.route("/detect-raster", methods=["POST"])
+@require_api_key
+def detect_raster_images():
+    """Detect raster images in PDF files."""
+    try:
+        if not RASTER_DETECTION_AVAILABLE:
+            return jsonify({
+                "error": "Raster detection not available - missing PyMuPDF"
+            }), 503
+        
+        # Check if file is present
+        if "file" not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files["file"]
+        if file.filename == "":
+            return jsonify({"error": "No file selected"}), 400
+        
+        # Check if PDF
+        if not file.filename.lower().endswith(".pdf"):
+            return jsonify({"error": "Only PDF files are supported for raster detection"}), 400
+        
+        # Check if raster detection is enabled
+        if not RASTER_DETECTION_ENABLED:
+            return jsonify({"error": "Raster detection is disabled"}), 503
+        # Parse settings from query parameters
+        settings = {}
+        # Apply environment variable defaults
+        settings["min_image_size"] = DEFAULT_MIN_IMAGE_SIZE
+        settings["max_image_size"] = DEFAULT_MAX_IMAGE_SIZE
+        settings["ratio_threshold"] = DEFAULT_RATIO_THRESHOLD
+        
+        # Image size settings
+        min_width = request.args.get("min_width", type=int)
+        min_height = request.args.get("min_height", type=int)
+        if min_width and min_height:
+            settings["min_image_size"] = (min_width, min_height)
+        
+        max_width = request.args.get("max_width", type=int)
+        max_height = request.args.get("max_height", type=int)
+        if max_width and max_height:
+            settings["max_image_size"] = (max_width, max_height)
+        
+        # Coverage settings
+        check_ratio = request.args.get("check_image_ratio", "true").lower() == "true"
+        settings["check_image_ratio"] = check_ratio
+        
+        ratio_threshold = request.args.get("ratio_threshold", type=float)
+        if ratio_threshold is not None:
+            settings["ratio_threshold"] = ratio_threshold
+        
+        # Metadata settings
+        include_metadata = request.args.get("include_metadata", "false").lower() == "true"
+        settings["include_metadata"] = include_metadata
+        
+        # Timeout setting
+        timeout = request.args.get("timeout", type=int)
+        if timeout is not None:
+            settings["timeout_seconds"] = timeout
+        
+        # Save file temporarily
+        filename = secure_filename(file.filename)
+        file_id = str(uuid.uuid4())
+        temp_filename = f"raster_{file_id}_{filename}"
+        file_path = os.path.join(app.config["UPLOAD_FOLDER"], temp_filename)
+        
+        file.save(file_path)
+        logger.info(f"Saved PDF for raster detection: {file_path}")
+        
+        try:
+            # Apply circuit breaker if available
+            if ENHANCED_FEATURES_AVAILABLE:
+                detect_func = with_circuit_breaker(detect_pdf_raster_images)
+            else:
+                detect_func = detect_pdf_raster_images
+            
+            result = detect_func(file_path, settings)
+            
+            # Update metrics if available
+            if metrics_collector:
+                metrics_collector.increment_counter("raster_detections")
+                if result.get("has_raster_images"):
+                    metrics_collector.increment_counter("raster_images_found")
+            
+            return jsonify({
+                "status": "completed",
+                "result": result,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            
+        finally:
+            # Clean up temporary file
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"Cleaned up temporary file: {file_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup {file_path}: {cleanup_error}")
+    
+    except CircuitBreakerOpenException:
+        return jsonify({
+            "error": "Raster detection temporarily unavailable",
+            "status": "circuit_breaker_open"
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in detect_raster_images: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+    """Manually trigger cleanup of temporary files."""
+    try:
+        task = cleanup_temp_files.delay()
+        return jsonify({
             'message': 'Cleanup task started',
             'task_id': task.id
         })
@@ -363,7 +495,7 @@ if __name__ == '__main__':
     logger.info("Starting Reliable Document Processing Service")
     logger.info(f"Document processing available: {DOCUMENT_PROCESSING_AVAILABLE}")
     logger.info(f"Enhanced features available: {ENHANCED_FEATURES_AVAILABLE}")
-    
+    logger.info(f"Raster detection available: {RASTER_DETECTION_AVAILABLE}")    
     if DOCUMENT_PROCESSING_AVAILABLE:
         logger.info(f"Supported formats: {get_supported_formats()}")
     

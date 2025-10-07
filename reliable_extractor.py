@@ -40,7 +40,12 @@ except ImportError:
 # Text processing
 import chardet
 from PIL import Image
-
+# Raster detection
+try:
+    from pdf_raster_detector import detect_pdf_raster_images
+    RASTER_DETECTION_AVAILABLE = True
+except ImportError:
+    RASTER_DETECTION_AVAILABLE = False
 logger = logging.getLogger(__name__)
 
 class ReliableDocumentExtractor:
@@ -253,6 +258,29 @@ class ReliableDocumentExtractor:
             logger.error(f"PPTX extraction failed: {str(e)}")
             return f"Error extracting PPTX: {str(e)}"
     
+    def detect_raster_images(self, file_path: str, settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Detect raster images in PDF files.
+        
+        Args:
+            file_path: Path to the PDF file
+            settings: Optional configuration settings for detection
+            
+        Returns:
+            Dict with raster image detection results
+        """
+        if not RASTER_DETECTION_AVAILABLE:
+            raise ImportError("Raster detection not available - missing dependencies")
+        
+        file_ext = Path(file_path).suffix.lower().lstrip(".")
+        if file_ext != "pdf":
+            raise ValueError("Raster detection only supported for PDF files")
+        
+        try:
+            return detect_pdf_raster_images(file_path, settings)
+        except Exception as e:
+            logger.error(f"Error detecting raster images in {file_path}: {str(e)}")
+            raise Exception(f"Raster detection failed: {str(e)}")
     def _extract_text_file(self, file_path: str) -> str:
         """Extract text from plain text files with encoding detection."""
         try:
@@ -290,6 +318,18 @@ def extract_document_text(file_path: str) -> Dict[str, Any]:
     """
     return reliable_extractor.extract_text(file_path)
 
+def detect_pdf_raster(file_path: str, settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Convenience function to detect raster images in PDF.
+    
+    Args:
+        file_path: Path to the PDF file
+        settings: Optional configuration settings
+        
+    Returns:
+        Dict containing raster image detection results
+    """
+    return reliable_extractor.detect_raster_images(file_path, settings)
 def get_supported_formats() -> list:
     """Get list of supported document formats."""
     return reliable_extractor.supported_formats
