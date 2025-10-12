@@ -28,6 +28,16 @@ except ImportError as e:
     logging.warning(f"Raster detection not available: {e}")
     RASTER_DETECTION_AVAILABLE = False
 
+# Import OCR module
+try:
+    from ocr_processor import initialize_ocr_processor, is_ocr_available
+    OCR_LANGUAGES = os.environ.get('OCR_LANGUAGES', 'eng+rus')
+    initialize_ocr_processor(OCR_LANGUAGES)
+    OCR_AVAILABLE = is_ocr_available()
+except ImportError as e:
+    logging.warning(f"OCR processing not available: {e}")
+    OCR_AVAILABLE = False
+
 try:
     from redis_manager import redis_manager
     from circuit_breaker import with_circuit_breaker, CircuitBreakerOpenException
@@ -107,19 +117,21 @@ def require_api_key(f):
     return decorated_function
 
 @celery.task(bind=True, name='app.process_document')
-def process_document(self, file_path, task_id):
+def process_document(self, file_path, task_id, ocr_enabled=False):
     """Celery task to process document asynchronously."""
     try:
-        logger.info(f"Processing document: {file_path}")
+        logger.info(f"Processing document: {file_path}, OCR: {ocr_enabled}")
         
         if not DOCUMENT_PROCESSING_AVAILABLE:
             raise Exception("Document processing not available - missing dependencies")
         
         # Apply circuit breaker if available
         if ENHANCED_FEATURES_AVAILABLE:
-            extract_func = with_circuit_breaker(extract_document_text)
+            def extract_with_ocr(fp):
+                return extract_document_text(fp, ocr_enabled=ocr_enabled)
+            extract_func = with_circuit_breaker(extract_with_ocr)
         else:
-            extract_func = extract_document_text
+            extract_func = lambda fp: extract_document_text(fp, ocr_enabled=ocr_enabled)
         
         # Extract text
         result = extract_func(file_path)
@@ -207,6 +219,8 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat(),
             'document_processing': DOCUMENT_PROCESSING_AVAILABLE,
             'enhanced_features': ENHANCED_FEATURES_AVAILABLE,
+            'ocr_available': OCR_AVAILABLE,
+            'ocr_languages': OCR_LANGUAGES if OCR_AVAILABLE else None,
             'redis': redis_status,
             'supported_formats': get_supported_formats() if DOCUMENT_PROCESSING_AVAILABLE else []
         })
@@ -253,6 +267,15 @@ def convert_document():
         # Check async mode
         async_mode = request.args.get('async', 'false').lower() == 'true'
         
+        # Check OCR mode
+        ocr_enabled = request.args.get('ocr', 'false').lower() == 'true'
+        
+        # Validate OCR request
+        if ocr_enabled and not OCR_AVAILABLE:
+            return jsonify({
+                'error': 'OCR not available - Tesseract not installed or pytesseract missing'
+            }), 503
+        
         # Save file temporarily
         filename = secure_filename(file.filename)
         file_id = str(uuid.uuid4())
@@ -264,19 +287,22 @@ def convert_document():
         
         if async_mode:
             # Process asynchronously
-            task = process_document.delay(file_path, file_id)
+            task = process_document.delay(file_path, file_id, ocr_enabled)
             return jsonify({
                 'task_id': task.id,
                 'status': 'processing',
-                'message': 'Document processing started'
+                'message': 'Document processing started',
+                'ocr_enabled': ocr_enabled
             })
         else:
             # Process synchronously
             try:
                 if ENHANCED_FEATURES_AVAILABLE:
-                    extract_func = with_circuit_breaker(extract_document_text)
+                    def extract_with_ocr(fp):
+                        return extract_document_text(fp, ocr_enabled=ocr_enabled)
+                    extract_func = with_circuit_breaker(extract_with_ocr)
                 else:
-                    extract_func = extract_document_text
+                    extract_func = lambda fp: extract_document_text(fp, ocr_enabled=ocr_enabled)
                 
                 result = extract_func(file_path)
                 
@@ -495,7 +521,10 @@ if __name__ == '__main__':
     logger.info("Starting Reliable Document Processing Service")
     logger.info(f"Document processing available: {DOCUMENT_PROCESSING_AVAILABLE}")
     logger.info(f"Enhanced features available: {ENHANCED_FEATURES_AVAILABLE}")
-    logger.info(f"Raster detection available: {RASTER_DETECTION_AVAILABLE}")    
+    logger.info(f"Raster detection available: {RASTER_DETECTION_AVAILABLE}")
+    logger.info(f"OCR available: {OCR_AVAILABLE}")
+    if OCR_AVAILABLE:
+        logger.info(f"OCR languages: {OCR_LANGUAGES}")
     if DOCUMENT_PROCESSING_AVAILABLE:
         logger.info(f"Supported formats: {get_supported_formats()}")
     

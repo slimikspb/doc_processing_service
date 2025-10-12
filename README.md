@@ -6,6 +6,7 @@ A production-ready Flask microservice that converts various document formats (PD
 
 - **Multiple Document Formats**: PDF, DOCX, XLSX, PPTX, TXT, RTF
 - **Reliable Processing**: Uses PyMuPDF, pdfplumber, python-docx, openpyxl, python-pptx instead of problematic textract
+- **OCR Support**: Extract text from images in PDFs using Tesseract OCR (optional, opt-in)
 - **Async & Sync Processing**: Choose between immediate or background processing
 - **Production Ready**: Multi-stage Docker builds, health checks, non-root security
 - **API Key Authentication**: Secure endpoint access
@@ -52,6 +53,15 @@ curl -X POST \
   http://localhost:5001/convert
 ```
 
+### Convert Document with OCR (Sync)
+```bash
+POST /convert?ocr=true
+curl -X POST \
+  -H "X-API-Key: default_dev_key" \
+  -F "file=@document.pdf" \
+  "http://localhost:5001/convert?ocr=true"
+```
+
 ### Convert Document (Async)
 ```bash
 POST /convert?async=true
@@ -59,6 +69,15 @@ curl -X POST \
   -H "X-API-Key: default_dev_key" \
   -F "file=@document.pdf" \
   "http://localhost:5001/convert?async=true"
+```
+
+### Convert Document with OCR (Async)
+```bash
+POST /convert?async=true&ocr=true
+curl -X POST \
+  -H "X-API-Key: default_dev_key" \
+  -F "file=@document.pdf" \
+  "http://localhost:5001/convert?async=true&ocr=true"
 ```
 
 ### Check Task Status
@@ -84,6 +103,7 @@ Set environment variables in docker-compose.yml:
 - `MAX_CONTENT_LENGTH`: Max file size in bytes (default: 50MB)
 - `CELERY_BROKER_URL`: Redis connection for Celery
 - `CELERY_RESULT_BACKEND`: Redis backend for results
+- `OCR_LANGUAGES`: Tesseract language codes (default: `eng+rus`, supports multiple: `eng+rus+deu`)
 
 ## 🧪 Testing
 
@@ -94,8 +114,14 @@ python test_service.py
 # Test with custom file
 python test_service.py --file path/to/document.pdf
 
+# Test with OCR enabled
+python test_service.py --file path/to/document.pdf --ocr
+
 # Test async processing
 python test_service.py --async-mode
+
+# Test async + OCR
+python test_service.py --file path/to/document.pdf --async-mode --ocr
 
 # Test cleanup
 python test_service.py --cleanup
@@ -164,7 +190,23 @@ docker-compose up -d
     "file_type": "pdf",
     "file_size": 1024768,
     "text_length": 5432,
-    "extractor": "reliable_extractor"
+    "extractor": "reliable_extractor",
+    "ocr_enabled": false
+  },
+  "status": "completed"
+}
+```
+
+### Successful Conversion with OCR
+```json
+{
+  "text": "Original PDF text...\n\n============================================================\nOCR TEXT FROM IMAGES\n============================================================\n\n[IMAGE ON PAGE 1: 1024x768px]\nText extracted from image via OCR...\n[END IMAGE]\n\n[IMAGE ON PAGE 2: 800x600px]\nMore OCR text...\n[END IMAGE]",
+  "metadata": {
+    "file_type": "pdf",
+    "file_size": 2048000,
+    "text_length": 15432,
+    "extractor": "reliable_extractor",
+    "ocr_enabled": true
   },
   "status": "completed"
 }
@@ -269,6 +311,110 @@ The raster detection feature can be configured using environment variables:
 - **DEFAULT_MIN_IMAGE_SIZE**: Default minimum image size as "width,height" (default: "100,100")
 - **DEFAULT_MAX_IMAGE_SIZE**: Default maximum image size as "width,height" (default: "5000,5000")
 - **DEFAULT_RATIO_THRESHOLD**: Default page coverage threshold (default: 0.5)
+
+## OCR (Optical Character Recognition)
+
+The service includes optional Tesseract OCR support to extract text from images embedded in PDF documents.
+
+### How It Works
+
+1. **Opt-in Feature**: OCR is only activated when you pass `ocr=true` query parameter
+2. **Automatic Detection**: Only processes PDFs that contain images
+3. **Multi-language Support**: Configurable language support via `OCR_LANGUAGES` environment variable
+4. **Image Extraction**: Extracts all images from PDF pages temporarily
+5. **OCR Processing**: Runs Tesseract OCR on each extracted image
+6. **Text Enrichment**: Combines original PDF text with OCR results, clearly annotated by page
+7. **Cleanup**: Automatically removes temporary image files after processing
+
+### Installation Requirements
+
+**Local Installation:**
+```bash
+# Install Tesseract OCR system package
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus
+
+# macOS
+brew install tesseract tesseract-lang
+
+# Install Python dependencies
+pip install -r requirements.txt
+```
+
+**Docker Installation:**
+Tesseract is automatically installed in the Docker container.
+
+### Usage Examples
+
+**Sync Processing with OCR:**
+```bash
+curl -X POST \
+  -H "X-API-Key: default_dev_key" \
+  -F "file=@scanned_document.pdf" \
+  "http://localhost:5001/convert?ocr=true"
+```
+
+**Async Processing with OCR:**
+```bash
+# Start processing
+curl -X POST \
+  -H "X-API-Key: default_dev_key" \
+  -F "file=@scanned_document.pdf" \
+  "http://localhost:5001/convert?async=true&ocr=true"
+
+# Check status
+curl -H "X-API-Key: default_dev_key" \
+  http://localhost:5001/task/{task_id}
+```
+
+### Configuration
+
+Configure OCR languages using environment variable:
+```bash
+# Single language
+export OCR_LANGUAGES="eng"
+
+# Multiple languages (English + Russian)
+export OCR_LANGUAGES="eng+rus"
+
+# Multiple languages (English + Russian + German)
+export OCR_LANGUAGES="eng+rus+deu"
+```
+
+Available language codes: `eng` (English), `rus` (Russian), `deu` (German), `fra` (French), `spa` (Spanish), and many more. See [Tesseract documentation](https://github.com/tesseract-ocr/tesseract) for full list.
+
+### Output Format
+
+When OCR is enabled, the output includes:
+- Original text extracted from PDF
+- Separator section: `OCR TEXT FROM IMAGES`
+- For each image: page number, dimensions, and OCR-extracted text
+- Clear markers: `[IMAGE ON PAGE X]` and `[END IMAGE]`
+
+### Performance Notes
+
+- OCR processing adds significant time to document processing (varies by image count/size)
+- Use async mode (`async=true`) for PDFs with many images
+- Only enable OCR when needed (documents with scanned pages or embedded images)
+- The service automatically skips OCR if no images are found in the PDF
+
+### Troubleshooting
+
+**OCR not available error:**
+- Ensure Tesseract is installed: `tesseract --version`
+- Install required language packs
+- Verify pytesseract is in requirements.txt
+
+**No OCR text in output:**
+- Check if PDF actually contains images
+- Verify images are extractable (not restricted by PDF security)
+- Check logs for extraction errors
+
+**Poor OCR quality:**
+- Ensure images in PDF are high resolution (300+ DPI recommended)
+- Try preprocessing images before adding to PDF
+- Verify correct language codes are configured
 
 ### Use Cases
 

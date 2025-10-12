@@ -2,7 +2,10 @@ version: '3.8'
 
 services:
   doc-converter:
-    image: ghcr.io/timur-nocodia/doc_processing_service:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: doc_processing_service:local
     ports:
       - "5001:5000"
     restart: unless-stopped
@@ -28,6 +31,7 @@ services:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - API_KEY=${API_KEY:-default_dev_key}
+      - OCR_LANGUAGES=${OCR_LANGUAGES:-eng+rus}
     depends_on:
       redis:
         condition: service_healthy
@@ -54,7 +58,7 @@ services:
     command: redis-server --maxmemory 384mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10 --save 60 10000
 
   celery-worker:
-    image: ghcr.io/timur-nocodia/doc_processing_service:latest
+    image: doc_processing_service:local
     command: ["/usr/local/bin/celery", "-A", "app.celery", "worker", "--loglevel=info", "--max-tasks-per-child=10", "--pool=prefork", "--concurrency=2"]
     restart: unless-stopped
     deploy:
@@ -77,12 +81,13 @@ services:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - API_KEY=${API_KEY:-default_dev_key}
+      - OCR_LANGUAGES=${OCR_LANGUAGES:-eng+rus}
     depends_on:
       redis:
         condition: service_healthy
       
   celery-beat:
-    image: ghcr.io/timur-nocodia/doc_processing_service:latest
+    image: doc_processing_service:local
     command: ["/usr/local/bin/celery", "-A", "app.celery", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     restart: unless-stopped
     deploy:
@@ -103,6 +108,7 @@ services:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - API_KEY=${API_KEY:-default_dev_key}
+      - OCR_LANGUAGES=${OCR_LANGUAGES:-eng+rus}
     depends_on:
       redis:
         condition: service_healthy

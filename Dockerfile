@@ -19,10 +19,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Production stage
 FROM python:3.9-slim
 
-# Install only runtime dependencies
+# Install only runtime dependencies including Tesseract OCR
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -44,11 +47,15 @@ RUN python -c "import flask, celery, redis; print('✓ Core dependencies OK')" &
     python -c "import fitz, pdfplumber; print('✓ PDF dependencies OK')" && \
     python -c "import docx, openpyxl; print('✓ Office dependencies OK')" && \
     python -c "from pptx import Presentation; print('✓ PowerPoint dependencies OK')" && \
-    which celery && which gunicorn
+    python -c "import pytesseract; print('✓ OCR dependencies OK')" && \
+    which celery && which gunicorn && which tesseract
 
 # Copy application code
 COPY --chown=appuser:appuser app.py .
 COPY --chown=appuser:appuser reliable_extractor.py .
+COPY --chown=appuser:appuser image_extractor.py .
+COPY --chown=appuser:appuser ocr_processor.py .
+COPY --chown=appuser:appuser pdf_raster_detector.py .
 COPY --chown=appuser:appuser file_cleanup.py .
 COPY --chown=appuser:appuser redis_manager.py .
 COPY --chown=appuser:appuser circuit_breaker.py .

@@ -73,9 +73,9 @@ def create_test_file(file_type="txt"):
     
     return test_file
 
-def test_document_conversion(file_path=None, async_mode=False):
+def test_document_conversion(file_path=None, async_mode=False, ocr_enabled=False):
     """Test document conversion."""
-    print(f"\n🔍 Testing document conversion (async={async_mode})...")
+    print(f"\n🔍 Testing document conversion (async={async_mode}, ocr={ocr_enabled})...")
     
     # Create test file if none provided
     if not file_path:
@@ -93,7 +93,10 @@ def test_document_conversion(file_path=None, async_mode=False):
         
         with open(file_path, 'rb') as f:
             files = {"file": f}
-            params = {"async": "true" if async_mode else "false"}
+            params = {
+                "async": "true" if async_mode else "false",
+                "ocr": "true" if ocr_enabled else "false"
+            }
             
             response = requests.post(
                 f"{BASE_URL}/convert",
@@ -138,6 +141,15 @@ def test_document_conversion(file_path=None, async_mode=False):
                 print(f"✅ Sync conversion completed")
                 print(f"   Text length: {len(data.get('text', ''))}")
                 print(f"   Status: {data.get('status')}")
+                
+                # Check for OCR enrichment if enabled
+                if ocr_enabled:
+                    text = data.get('text', '')
+                    if 'OCR TEXT FROM IMAGES' in text:
+                        print(f"   ✅ OCR enrichment detected in output")
+                    else:
+                        print(f"   ⚠️  OCR enabled but no OCR text found (might be no images)")
+                
                 return True
         else:
             print(f"❌ Conversion failed: {response.status_code}")
@@ -180,15 +192,17 @@ def test_cleanup():
         return False
 
 def main():
+    global API_KEY
+    
     parser = argparse.ArgumentParser(description="Test document processing service")
     parser.add_argument("--file", help="Path to test file")
     parser.add_argument("--async-mode", action="store_true", help="Test async processing")
+    parser.add_argument("--ocr", action="store_true", help="Test OCR processing")
     parser.add_argument("--cleanup", action="store_true", help="Test cleanup endpoint")
     parser.add_argument("--api-key", default=API_KEY, help="API key to use")
     
     args = parser.parse_args()
     
-    global API_KEY
     API_KEY = args.api_key
     
     print("🚀 Testing Document Processing Service")
@@ -205,11 +219,11 @@ def main():
     
     # Document conversion tests
     if args.file or not args.cleanup:
-        if not test_document_conversion(args.file, async_mode=False):
+        if not test_document_conversion(args.file, async_mode=False, ocr_enabled=args.ocr):
             all_tests_passed = False
         
         if args.async_mode:
-            if not test_document_conversion(args.file, async_mode=True):
+            if not test_document_conversion(args.file, async_mode=True, ocr_enabled=args.ocr):
                 all_tests_passed = False
     
     # Cleanup test

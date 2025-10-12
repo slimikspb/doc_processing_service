@@ -72,12 +72,13 @@ class ReliableDocumentExtractor:
             
         return formats
     
-    def extract_text(self, file_path: str) -> Dict[str, Any]:
+    def extract_text(self, file_path: str, ocr_enabled: bool = False) -> Dict[str, Any]:
         """
         Extract text from a document file.
         
         Args:
             file_path: Path to the document file
+            ocr_enabled: Whether to perform OCR on images in PDFs
             
         Returns:
             Dict with 'text' and 'metadata' keys
@@ -89,11 +90,11 @@ class ReliableDocumentExtractor:
             file_ext = Path(file_path).suffix.lower().lstrip('.')
             file_size = os.path.getsize(file_path)
             
-            logger.info(f"Extracting text from {file_ext.upper()} file: {file_path} ({file_size} bytes)")
+            logger.info(f"Extracting text from {file_ext.upper()} file: {file_path} ({file_size} bytes), OCR: {ocr_enabled}")
             
             # Route to appropriate extractor
             if file_ext == 'pdf':
-                text = self._extract_pdf(file_path)
+                text = self._extract_pdf(file_path, ocr_enabled=ocr_enabled)
             elif file_ext in ['docx', 'doc']:
                 text = self._extract_docx(file_path)
             elif file_ext in ['xlsx', 'xls']:
@@ -111,7 +112,8 @@ class ReliableDocumentExtractor:
                     'file_type': file_ext,
                     'file_size': file_size,
                     'text_length': len(text),
-                    'extractor': 'reliable_extractor'
+                    'extractor': 'reliable_extractor',
+                    'ocr_enabled': ocr_enabled if file_ext == 'pdf' else False
                 }
             }
             
@@ -119,8 +121,8 @@ class ReliableDocumentExtractor:
             logger.error(f"Error extracting text from {file_path}: {str(e)}")
             raise
     
-    def _extract_pdf(self, file_path: str) -> str:
-        """Extract text from PDF using PyMuPDF with pdfplumber fallback."""
+    def _extract_pdf(self, file_path: str, ocr_enabled: bool = False) -> str:
+        """Extract text from PDF using PyMuPDF with pdfplumber fallback and optional OCR."""
         if not PDF_AVAILABLE:
             raise ImportError("PDF processing libraries not available")
         
@@ -147,11 +149,110 @@ class ReliableDocumentExtractor:
                             text_parts.append(page_text)
                     text = '\n'.join(text_parts)
             
+            # Perform OCR if enabled and images are present
+            if ocr_enabled:
+                text = self._enrich_with_ocr(file_path, text)
+            
             return text
             
         except Exception as e:
             logger.error(f"PDF extraction failed: {str(e)}")
             return f"Error extracting PDF: {str(e)}"
+    
+    def _enrich_with_ocr(self, file_path: str, original_text: str) -> str:
+        """
+        Enrich PDF text with OCR from embedded images.
+        
+        Args:
+            file_path: Path to PDF file
+            original_text: Original extracted text from PDF
+            
+        Returns:
+            Text enriched with OCR results
+        """
+        try:
+            from image_extractor import extract_images_from_pdf, cleanup_images, is_image_extraction_available
+            from ocr_processor import process_images, is_ocr_available
+            
+            if not is_image_extraction_available():
+                logger.warning("Image extraction not available, skipping OCR")
+                return original_text
+            
+            if not is_ocr_available():
+                logger.warning("OCR not available, skipping OCR enrichment")
+                return original_text
+            
+            # Extract images from PDF
+            images = extract_images_from_pdf(file_path)
+            
+            if not images:
+                logger.info("No images found in PDF, skipping OCR")
+                return original_text
+            
+            logger.info(f"Found {len(images)} images in PDF, performing OCR")
+            
+            # Perform OCR on all images
+            try:
+                images_with_ocr = process_images(images)
+                
+                # Build enriched text by page
+                enriched_text = self._combine_text_with_ocr(original_text, images_with_ocr)
+                
+                return enriched_text
+                
+            finally:
+                # Always cleanup temporary image files
+                cleanup_images(images)
+            
+        except Exception as e:
+            logger.error(f"OCR enrichment failed: {str(e)}")
+            # Return original text if OCR fails
+            return original_text
+    
+    def _combine_text_with_ocr(self, original_text: str, images_with_ocr: list) -> str:
+        """
+        Combine original PDF text with OCR results from images.
+        
+        Args:
+            original_text: Original text from PDF
+            images_with_ocr: List of image metadata with OCR results
+            
+        Returns:
+            Combined text with OCR annotations
+        """
+        # Group images by page
+        images_by_page = {}
+        for img in images_with_ocr:
+            page_num = img.get('page_number', 0)
+            if page_num not in images_by_page:
+                images_by_page[page_num] = []
+            images_by_page[page_num].append(img)
+        
+        # Split original text by pages (approximation)
+        text_lines = original_text.split('\n')
+        
+        # Build combined text
+        combined_parts = []
+        combined_parts.append(original_text)
+        combined_parts.append("\n\n" + "="*60)
+        combined_parts.append("OCR TEXT FROM IMAGES")
+        combined_parts.append("="*60 + "\n")
+        
+        # Add OCR results organized by page
+        for page_num in sorted(images_by_page.keys()):
+            page_images = images_by_page[page_num]
+            
+            for img in page_images:
+                ocr_text = img.get('ocr_text', '').strip()
+                if ocr_text:
+                    width = img.get('width', 0)
+                    height = img.get('height', 0)
+                    
+                    combined_parts.append(f"\n[IMAGE ON PAGE {page_num}: {width}x{height}px]")
+                    combined_parts.append(ocr_text)
+                    combined_parts.append("[END IMAGE]\n")
+        
+        return '\n'.join(combined_parts)
     
     def _extract_docx(self, file_path: str) -> str:
         """Extract text from DOCX/DOC files."""
@@ -306,17 +407,18 @@ class ReliableDocumentExtractor:
 # Global instance
 reliable_extractor = ReliableDocumentExtractor()
 
-def extract_document_text(file_path: str) -> Dict[str, Any]:
+def extract_document_text(file_path: str, ocr_enabled: bool = False) -> Dict[str, Any]:
     """
     Convenience function to extract text from a document.
     
     Args:
         file_path: Path to the document file
+        ocr_enabled: Whether to perform OCR on images in PDFs
         
     Returns:
         Dict with extracted text and metadata
     """
-    return reliable_extractor.extract_text(file_path)
+    return reliable_extractor.extract_text(file_path, ocr_enabled=ocr_enabled)
 
 def detect_pdf_raster(file_path: str, settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
