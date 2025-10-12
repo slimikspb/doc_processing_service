@@ -96,8 +96,12 @@ class ImageExtractor:
                     width = pix.width
                     height = pix.height
                     
-                    # Get image position on page
-                    img_rect = page.get_image_bbox(img)
+                    # Get image position on page (pass full image tuple)
+                    try:
+                        img_rect = page.get_image_rects(xref)[0]  # Get first rectangle for this xref
+                    except (IndexError, AttributeError):
+                        # Fallback: use page dimensions if get_image_rects not available
+                        img_rect = page.rect
                     
                     # Generate unique filename
                     file_id = str(uuid.uuid4())
