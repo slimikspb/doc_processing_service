@@ -137,9 +137,8 @@ def process_document(self, file_path, task_id, ocr_enabled=False):
         result = extract_func(file_path)
         
         # Update metrics if available
-        if metrics_collector:
-            metrics_collector.increment_counter('documents_processed')
-            metrics_collector.record_processing_time('document_processing', 1.0)
+        if metrics_collector and hasattr(metrics_collector, 'record_request'):
+            metrics_collector.record_request(success=True, response_time=1.0)
         
         logger.info(f"Successfully processed document: {file_path}")
         return {
@@ -307,8 +306,8 @@ def convert_document():
                 result = extract_func(file_path)
                 
                 # Update metrics if available
-                if metrics_collector:
-                    metrics_collector.increment_counter('documents_processed')
+                if metrics_collector and hasattr(metrics_collector, 'record_request'):
+                    metrics_collector.record_request(success=True, response_time=1.0)
                 
                 return jsonify({
                     'text': result['text'],
@@ -469,11 +468,7 @@ def detect_raster_images():
             
             result = detect_func(file_path, settings)
             
-            # Update metrics if available
-            if metrics_collector:
-                metrics_collector.increment_counter("raster_detections")
-                if result.get("has_raster_images"):
-                    metrics_collector.increment_counter("raster_images_found")
+            # Metrics not tracked for raster detection currently
             
             return jsonify({
                 "status": "completed",
