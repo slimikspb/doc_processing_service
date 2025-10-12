@@ -511,7 +511,7 @@ def detect_raster_images():
 
 # Register monitoring endpoints if available
 if ENHANCED_FEATURES_AVAILABLE and metrics_collector:
-    create_monitoring_endpoints(app, metrics_collector)
+    create_monitoring_endpoints(app)
 
 # Register graceful shutdown if available
 if ENHANCED_FEATURES_AVAILABLE and shutdown_manager:
