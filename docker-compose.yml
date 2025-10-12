@@ -2,10 +2,7 @@ version: '3.8'
 
 services:
   doc-converter:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: doc_processing_service:local
+    image: ghcr.io/timur-nocodia/doc_processing_service:latest
     ports:
       - "5001:5000"
     restart: unless-stopped
@@ -58,7 +55,7 @@ services:
     command: redis-server --maxmemory 384mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10 --save 60 10000
 
   celery-worker:
-    image: doc_processing_service:local
+    image: ghcr.io/timur-nocodia/doc_processing_service:latest
     command: ["/usr/local/bin/celery", "-A", "app.celery", "worker", "--loglevel=info", "--max-tasks-per-child=10", "--pool=prefork", "--concurrency=2"]
     restart: unless-stopped
     deploy:
@@ -87,7 +84,7 @@ services:
         condition: service_healthy
       
   celery-beat:
-    image: doc_processing_service:local
+    image: ghcr.io/timur-nocodia/doc_processing_service:latest
     command: ["/usr/local/bin/celery", "-A", "app.celery", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     restart: unless-stopped
     deploy:

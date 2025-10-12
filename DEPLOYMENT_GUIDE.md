@@ -1,21 +1,43 @@
 # 🚀 Complete Deployment Guide
 
-## Critical Issue Resolution
+## Latest Updates
+
+### ✨ OCR Feature Added (2025-10-12)
+- ✅ Tesseract OCR support for PDF image extraction
+- ✅ Multi-language support (EN+RU default, configurable)
+- ✅ Opt-in via `ocr=true` query parameter
+- ✅ Automatic GitHub Actions build and push
+- ✅ See [OCR_DEPLOYMENT.md](OCR_DEPLOYMENT.md) for details
+
+### Previous Critical Issue Resolution
 
 The container health issues were caused by **Docker volume caching** where `app_code:/app` volume mounts were overriding the new code in Docker images with old cached code.
 
 ✅ **FIXED**: Removed all problematic volume mounts from docker-compose.yml
 ✅ **VERIFIED**: All required files are present and valid
 
-## Fresh Deployment Process
+## Automated Deployment Process
 
-### Step 1: Validate Build
+### Production (via Portainer)
+
+**Automatic Updates:**
+1. Push code to GitHub `main` branch
+2. GitHub Actions builds Docker image
+3. Image pushed to `ghcr.io/timur-nocodia/doc_processing_service:latest`
+4. Portainer auto-detects and pulls new image
+5. Services automatically recreated with new code
+
+**No manual intervention required!**
+
+### Local Development Deployment
+
+#### Step 1: Validate Build
 ```bash
 ./validate_build.sh
 ```
 This checks that all required files are present and properly configured.
 
-### Step 2: Fresh Deployment
+#### Step 2: Fresh Deployment
 ```bash
 ./deploy_fresh.sh
 ```
@@ -25,7 +47,7 @@ This script will:
 - Build fresh images with `--no-cache`
 - Start new containers with the latest code
 
-### Step 3: Monitor Health Status
+#### Step 3: Monitor Health Status
 ```bash
 # Check container status (should show all as healthy after ~60-90 seconds)
 docker-compose ps
@@ -87,7 +109,7 @@ algiers_redis_1            docker-entrypoint.sh redis ...   Up (healthy)   6379/
 Once deployed, test the service:
 
 ```bash
-# Health check
+# Health check (now includes OCR status)
 curl http://localhost:5001/health
 
 # Document conversion
@@ -95,9 +117,27 @@ curl -X POST -H "X-API-Key: default_dev_key" \
      -F "file=@test.docx" \
      http://localhost:5001/convert
 
+# Document conversion with OCR
+curl -X POST -H "X-API-Key: default_dev_key" \
+     -F "file=@test.pdf" \
+     "http://localhost:5001/convert?ocr=true"
+
 # Supported formats
 curl -H "X-API-Key: default_dev_key" \
      http://localhost:5001/formats
+```
+
+### Health Check Response
+```json
+{
+  "status": "healthy",
+  "document_processing": true,
+  "enhanced_features": false,
+  "ocr_available": true,
+  "ocr_languages": "eng+rus",
+  "redis": "healthy",
+  "supported_formats": ["txt", "rtf", "pdf", "docx", "doc", "xlsx", "xls", "pptx"]
+}
 ```
 
 ## Troubleshooting
@@ -127,17 +167,22 @@ If containers remain unhealthy:
 
 ## Key Files Updated
 
-- ✅ `docker-compose.yml` - Removed problematic volume mounts
-- ✅ `app_full.py` - Full-featured service with Office support
-- ✅ `startup.sh` - Comprehensive initialization script
-- ✅ `simple_health_check.py` - Lightweight health checks
-- ✅ `deploy_fresh.sh` - No-cache deployment script
-- ✅ `validate_build.sh` - Pre-deployment validation
+- ✅ `docker-compose.yml` - Production registry configuration + OCR env
+- ✅ `Dockerfile` - Tesseract OCR installation
+- ✅ `app.py` - OCR parameter and health check
+- ✅ `reliable_extractor.py` - OCR integration
+- ✅ `image_extractor.py` - NEW: Image extraction from PDFs
+- ✅ `ocr_processor.py` - NEW: Tesseract OCR wrapper
+- ✅ `.github/workflows/docker-build-push.yml` - NEW: Auto-build pipeline
+- ✅ `OCR_DEPLOYMENT.md` - NEW: OCR-specific documentation
 
 ## Success Criteria
 
 ✅ All 4 containers show "Up (healthy)" status
 ✅ No "unregistered task" errors in logs  
 ✅ Office document processing works (Excel/PowerPoint)
+✅ **OCR available** (`ocr_available: true` in health check)
+✅ **OCR languages** configured (default: `eng+rus`)
 ✅ API endpoints respond correctly
 ✅ Temp file cleanup runs without errors
+✅ **GitHub Actions** builds and pushes on commit

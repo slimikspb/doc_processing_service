@@ -9,7 +9,7 @@ This guide shows how to deploy the Document Processing Service using the standar
 git clone <repository-url>
 cd doc_processing_service
 
-# Start all services
+# Start all services (pulls latest image from GitHub registry)
 docker-compose up -d
 
 # Check everything is running
@@ -17,7 +17,18 @@ docker-compose ps
 
 # Test the service
 python test_service.py
+
+# Test with OCR
+python test_service.py --file test.pdf --ocr
 ```
+
+### Automatic Updates via Portainer
+
+**Production servers with Portainer:**
+- Portainer watches `ghcr.io/timur-nocodia/doc_processing_service:latest`
+- On git push to main, GitHub Actions builds new image
+- Portainer auto-pulls and recreates services
+- **Zero manual intervention required**
 
 ## Production Deployment
 
@@ -31,6 +42,11 @@ API_KEY=your_secure_api_key_here
 
 # Performance
 MAX_CONTENT_LENGTH=52428800  # 50MB
+
+# OCR Configuration
+OCR_LANGUAGES=eng+rus  # English + Russian (default)
+# OCR_LANGUAGES=eng+rus+deu  # Add German
+# OCR_LANGUAGES=eng  # English only
 
 # Redis (usually defaults are fine)
 CELERY_BROKER_URL=redis://redis:6379/0
@@ -57,6 +73,8 @@ curl http://localhost:5001/health
 {
   "status": "healthy",
   "document_processing": true,
+  "ocr_available": true,
+  "ocr_languages": "eng+rus",
   "supported_formats": ["txt", "rtf", "pdf", "docx", "doc", "xlsx", "xls", "pptx"]
 }
 ```
@@ -69,6 +87,18 @@ curl -X POST \
   -H "X-API-Key: your_api_key" \
   -F "file=@test_document.pdf" \
   http://localhost:5001/convert
+
+# Test with OCR enabled (extracts text from images in PDF)
+curl -X POST \
+  -H "X-API-Key: your_api_key" \
+  -F "file=@scanned_document.pdf" \
+  "http://localhost:5001/convert?ocr=true"
+
+# Test async processing with OCR
+curl -X POST \
+  -H "X-API-Key: your_api_key" \
+  -F "file=@large_document.pdf" \
+  "http://localhost:5001/convert?async=true&ocr=true"
 ```
 
 ## Monitoring
@@ -161,12 +191,17 @@ python test_service.py
 
 - [ ] Set secure `API_KEY` in environment
 - [ ] Configure appropriate `MAX_CONTENT_LENGTH`
+- [ ] Configure `OCR_LANGUAGES` if needed (default: eng+rus)
 - [ ] All containers show as "healthy" in `docker-compose ps`
 - [ ] Health endpoint returns `"status": "healthy"`
+- [ ] Health endpoint shows `"ocr_available": true`
 - [ ] Document conversion test passes
+- [ ] OCR test passes (with scanned PDF)
 - [ ] Logs show no errors or warnings
 - [ ] Redis persistence is working (data survives restarts)
 - [ ] Celery beat is scheduling cleanup tasks
+- [ ] GitHub Actions workflow runs successfully on push
+- [ ] Portainer auto-updates enabled (if using Portainer)
 
 ## Default Configuration
 
@@ -175,8 +210,17 @@ The service comes with sensible defaults:
 - **Port**: 5001 (external) → 5000 (internal)
 - **API Key**: `default_dev_key` (change for production!)
 - **File Size Limit**: 50MB
+- **OCR Languages**: English + Russian (`eng+rus`)
 - **Supported Formats**: PDF, DOCX, XLSX, PPTX, TXT, RTF
+- **OCR**: Opt-in via `ocr=true` parameter
 - **Redis**: Persistent data with automatic cleanup
 - **Security**: Non-root user execution
+- **Auto-Deploy**: GitHub Actions + Portainer integration
 
 Ready for production use with `docker-compose up -d`!
+
+## Additional Documentation
+
+- **[OCR_DEPLOYMENT.md](OCR_DEPLOYMENT.md)** - Detailed OCR feature guide
+- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Complete deployment reference
+- **[README.md](README.md)** - Full API documentation and usage examples
