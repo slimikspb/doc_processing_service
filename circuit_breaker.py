@@ -158,6 +158,10 @@ def circuit_breaker(breaker: CircuitBreaker):
         return wrapper
     return decorator
 
+def with_circuit_breaker(func: Callable) -> Callable:
+    """Decorator for generic circuit breaker protection"""
+    return circuit_breaker(textract_circuit_breaker)(func)
+
 def with_textract_circuit_breaker(func: Callable) -> Callable:
     """Decorator specifically for textract operations"""
     return circuit_breaker(textract_circuit_breaker)(func)

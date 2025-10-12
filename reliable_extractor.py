@@ -127,31 +127,38 @@ class ReliableDocumentExtractor:
             raise ImportError("PDF processing libraries not available")
         
         try:
-            # Try PyMuPDF first (faster)
+            # Try PyMuPDF first (faster) - extract page by page
             doc = fitz.open(file_path)
-            text_parts = []
+            pages_text = []
             
             for page_num in range(doc.page_count):
                 page = doc[page_num]
-                text_parts.append(page.get_text())
+                pages_text.append({
+                    'page_number': page_num + 1,
+                    'text': page.get_text()
+                })
             
             doc.close()
-            text = '\n'.join(text_parts)
             
             # If PyMuPDF didn't extract much text, try pdfplumber
-            if len(text.strip()) < 100:
+            total_text = '\n'.join([p['text'] for p in pages_text])
+            if len(total_text.strip()) < 100:
                 logger.info("PyMuPDF extracted little text, trying pdfplumber")
                 with pdfplumber.open(file_path) as pdf:
-                    text_parts = []
-                    for page in pdf.pages:
+                    pages_text = []
+                    for i, page in enumerate(pdf.pages):
                         page_text = page.extract_text()
-                        if page_text:
-                            text_parts.append(page_text)
-                    text = '\n'.join(text_parts)
+                        pages_text.append({
+                            'page_number': i + 1,
+                            'text': page_text if page_text else ''
+                        })
             
             # Perform OCR if enabled and images are present
             if ocr_enabled:
-                text = self._enrich_with_ocr(file_path, text)
+                text = self._enrich_with_ocr(file_path, pages_text)
+            else:
+                # Just combine all pages
+                text = '\n'.join([p['text'] for p in pages_text])
             
             return text
             
@@ -159,16 +166,16 @@ class ReliableDocumentExtractor:
             logger.error(f"PDF extraction failed: {str(e)}")
             return f"Error extracting PDF: {str(e)}"
     
-    def _enrich_with_ocr(self, file_path: str, original_text: str) -> str:
+    def _enrich_with_ocr(self, file_path: str, pages_text: list) -> str:
         """
         Enrich PDF text with OCR from embedded images.
         
         Args:
             file_path: Path to PDF file
-            original_text: Original extracted text from PDF
+            pages_text: List of dicts with page_number and text for each page
             
         Returns:
-            Text enriched with OCR results
+            Text enriched with OCR results inline
         """
         try:
             from image_extractor import extract_images_from_pdf, cleanup_images, is_image_extraction_available
@@ -176,18 +183,18 @@ class ReliableDocumentExtractor:
             
             if not is_image_extraction_available():
                 logger.warning("Image extraction not available, skipping OCR")
-                return original_text
+                return '\n'.join([p['text'] for p in pages_text])
             
             if not is_ocr_available():
                 logger.warning("OCR not available, skipping OCR enrichment")
-                return original_text
+                return '\n'.join([p['text'] for p in pages_text])
             
             # Extract images from PDF
             images = extract_images_from_pdf(file_path)
             
             if not images:
                 logger.info("No images found in PDF, skipping OCR")
-                return original_text
+                return '\n'.join([p['text'] for p in pages_text])
             
             logger.info(f"Found {len(images)} images in PDF, performing OCR")
             
@@ -195,8 +202,8 @@ class ReliableDocumentExtractor:
             try:
                 images_with_ocr = process_images(images)
                 
-                # Build enriched text by page
-                enriched_text = self._combine_text_with_ocr(original_text, images_with_ocr)
+                # Build enriched text with OCR inline
+                enriched_text = self._combine_text_with_ocr(pages_text, images_with_ocr)
                 
                 return enriched_text
                 
@@ -207,18 +214,18 @@ class ReliableDocumentExtractor:
         except Exception as e:
             logger.error(f"OCR enrichment failed: {str(e)}")
             # Return original text if OCR fails
-            return original_text
+            return '\n'.join([p['text'] for p in pages_text])
     
-    def _combine_text_with_ocr(self, original_text: str, images_with_ocr: list) -> str:
+    def _combine_text_with_ocr(self, pages_text: list, images_with_ocr: list) -> str:
         """
-        Combine original PDF text with OCR results from images.
+        Combine original PDF text with OCR results from images inline.
         
         Args:
-            original_text: Original text from PDF
+            pages_text: List of dicts with page_number and text for each page
             images_with_ocr: List of image metadata with OCR results
             
         Returns:
-            Combined text with OCR annotations
+            Combined text with OCR inline at page level
         """
         # Group images by page
         images_by_page = {}
@@ -228,29 +235,28 @@ class ReliableDocumentExtractor:
                 images_by_page[page_num] = []
             images_by_page[page_num].append(img)
         
-        # Split original text by pages (approximation)
-        text_lines = original_text.split('\n')
-        
-        # Build combined text
+        # Build combined text page by page
         combined_parts = []
-        combined_parts.append(original_text)
-        combined_parts.append("\n\n" + "="*60)
-        combined_parts.append("OCR TEXT FROM IMAGES")
-        combined_parts.append("="*60 + "\n")
         
-        # Add OCR results organized by page
-        for page_num in sorted(images_by_page.keys()):
-            page_images = images_by_page[page_num]
+        for page_info in pages_text:
+            page_num = page_info['page_number']
+            page_text = page_info['text']
             
-            for img in page_images:
-                ocr_text = img.get('ocr_text', '').strip()
-                if ocr_text:
-                    width = img.get('width', 0)
-                    height = img.get('height', 0)
-                    
-                    combined_parts.append(f"\n[IMAGE ON PAGE {page_num}: {width}x{height}px]")
-                    combined_parts.append(ocr_text)
-                    combined_parts.append("[END IMAGE]\n")
+            # Add the page's original text
+            if page_text.strip():
+                combined_parts.append(page_text)
+            
+            # Add OCR text from images on this page (inline)
+            if page_num in images_by_page:
+                for img in images_by_page[page_num]:
+                    ocr_text = img.get('ocr_text', '').strip()
+                    if ocr_text:
+                        width = img.get('width', 0)
+                        height = img.get('height', 0)
+                        
+                        combined_parts.append(f"\n[IMAGE ON PAGE {page_num}: {width}x{height}px]")
+                        combined_parts.append(ocr_text)
+                        combined_parts.append("[END IMAGE]\n")
         
         return '\n'.join(combined_parts)
     
