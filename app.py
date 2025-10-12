@@ -515,7 +515,7 @@ if ENHANCED_FEATURES_AVAILABLE and metrics_collector:
 
 # Register graceful shutdown if available
 if ENHANCED_FEATURES_AVAILABLE and shutdown_manager:
-    graceful_shutdown_middleware(app, shutdown_manager)
+    graceful_shutdown_middleware(app)
 
 if __name__ == '__main__':
     logger.info("Starting Reliable Document Processing Service")
